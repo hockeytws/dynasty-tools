@@ -136,14 +136,14 @@ js = replace_fn_body(js, 'async function updateBackfillBanner()',
     if (txt) txt.textContent = days + ' day(s) of history (sync via Tailscale to update)';
   }''')
 
-# loadTeamHistory — read from localStorage only in app.html
+# loadTeamHistory — read from IndexedDB in app.html
 js = replace_fn_body(js, 'async function loadTeamHistory()',
     '''  try {
-    const raw = localStorage.getItem('dynastyCalc_teamHistory_v1');
-    if (raw) { teamHistory = JSON.parse(raw); teamHistoryLoaded = true; }
+    const data = await dbGet('teamHistory');
+    if (data) { teamHistory = data; teamHistoryLoaded = true; }
   } catch(e) {}''')
 
-# 3. Redirect loadPlayers to localStorage
+# 3. Redirect loadPlayers to localStorage (small data — stays in LS)
 js = replace_fn_body(js, 'async function loadPlayers()',
     '''  const raw = localStorage.getItem('dynastyCalc_ktcData_v1');
   if (!raw) { setKtcStatus('No cache — tap SYNC'); return; }
@@ -159,7 +159,7 @@ js = replace_fn_body(js, 'async function loadPlayers()',
     setKtcStatus(allPlayers.length + ' players · ' + ageStr);
   } catch(e) { setKtcStatus('Cache error'); }''')
 
-# 4. Redirect loadRedraftPlayers to localStorage
+# 4. Redirect loadRedraftPlayers to localStorage (small data — stays in LS)
 js = replace_fn_body(js, 'async function loadRedraftPlayers()',
     '''  const raw = localStorage.getItem('dynastyCalc_ktcRedraftData_v1');
   if (!raw) { setRedraftStatus('No cache — tap SYNC'); return; }
@@ -176,25 +176,25 @@ js = replace_fn_body(js, 'async function loadRedraftPlayers()',
 js = replace_fn_body(js, 'async function lFetchAllLeagues()',
     '  return false;')
 
-# 5b. loadKtcHistory — read from localStorage only in app.html
+# 5b. loadKtcHistory — read from IndexedDB in app.html
 js = replace_fn_body(js, 'async function loadKtcHistory()',
     '''  try {
-    const raw = localStorage.getItem('dynastyCalc_ktcHistory_v1');
-    if (raw) { ktcHistory = JSON.parse(raw); historyLoaded = true; }
+    const data = await dbGet('ktcHistory');
+    if (data) { ktcHistory = data; historyLoaded = true; }
   } catch(e) {}''')
 
-# 5b2. loadKtcRedraftHistory — read from localStorage only in app.html
+# 5b2. loadKtcRedraftHistory — read from IndexedDB in app.html
 js = replace_fn_body(js, 'async function loadKtcRedraftHistory()',
     '''  try {
-    const raw = localStorage.getItem('dynastyCalc_ktcRedraftHistory_v1');
-    if (raw) { ktcRedraftHistory = JSON.parse(raw); redraftHistoryLoaded = true; }
+    const data = await dbGet('ktcRedraftHistory');
+    if (data) { ktcRedraftHistory = data; redraftHistoryLoaded = true; }
   } catch(e) {}''')
 
-# 5c. loadPlayerStats — read from localStorage only in app.html
+# 5c. loadPlayerStats — read from IndexedDB in app.html
 js = replace_fn_body(js, 'async function loadPlayerStats()',
     '''  try {
-    const raw = localStorage.getItem('dynastyCalc_playerStats_v1');
-    if (raw) { playerStats = JSON.parse(raw); statsLoaded = true; }
+    const data = await dbGet('playerStats');
+    if (data) { playerStats = data; statsLoaded = true; }
   } catch(e) {}''')
 
 # 6. buildCalcUI — always render immediately; no spinner loop (empty allPlayers = search just returns nothing)
@@ -205,6 +205,10 @@ js = replace_fn_body(js, 'async function init()',
     '''  loadLeagueOverrides();
   try { await loadPlayers(); } catch(e) {}
   try { await loadRedraftPlayers(); } catch(e) {}
+  try { await loadKtcHistory(); } catch(e) {}
+  try { await loadKtcRedraftHistory(); } catch(e) {}
+  try { await loadPlayerStats(); } catch(e) {}
+  try { await loadTeamHistory(); } catch(e) {}
   await lLoadAllLeagues();
   renderConfigOverrides();
   renderValueSourceSelector();
@@ -212,10 +216,12 @@ js = replace_fn_body(js, 'async function init()',
   syncConfigInputs();
   const hasKTC = allPlayers.length > 0;
   const hasLeagues = L_LEAGUES.some(l => leagueData[l.id]);
+  const hasHist = Object.keys(ktcHistory).length > 0;
   if (hasKTC || hasLeagues) {
     const parts = [];
     if (hasKTC) parts.push(allPlayers.length + ' players');
     if (hasLeagues) parts.push(L_LEAGUES.filter(l => leagueData[l.id]).length + '/' + L_LEAGUES.length + ' leagues');
+    if (hasHist) parts.push(Object.keys(ktcHistory).length + ' days history');
     setSyncBannerStatus(parts.join(' \u00b7 '), 'ok');
   } else {
     setSyncBannerStatus('No data \u2014 tap SYNC ALL to fetch', '');
@@ -228,6 +234,57 @@ if js.endswith('init();'):
     js = js[:-7].rstrip()
 
 js += '''
+
+// ── IndexedDB helper — persistent offline storage ────────────────────────────
+// Used for large data (history, stats) that exceeds localStorage's 5MB limit.
+// IndexedDB on iOS Safari gives PWAs ~500MB+.
+const IDB_NAME = 'DynastyTools';
+const IDB_VERSION = 1;
+const IDB_STORE = 'data';
+
+function _idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbGet(key) {
+  const db = await _idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbSet(key, value) {
+  const db = await _idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const req = tx.objectStore(IDB_STORE).put(value, key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbDel(key) {
+  const db = await _idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const req = tx.objectStore(IDB_STORE).delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
 
 // ── App-specific additions ────────────────────────────────────────────────────
 
@@ -392,8 +449,7 @@ async function syncAll() {
     if (rh.ok) {
       const hist = await rh.json();
       ktcHistory = hist; historyLoaded = true;
-      try { localStorage.setItem('dynastyCalc_ktcHistory_v1', JSON.stringify(hist)); }
-      catch(lse) { console.warn('History too large for localStorage:', lse.message); }
+      await dbSet('ktcHistory', hist);
       steps.push('History \u2713');
     } else { steps.push('History \u2717'); }
   } catch(e) { steps.push('History \u2717 ' + e.message); }
@@ -403,8 +459,7 @@ async function syncAll() {
     if (rrh.ok) {
       const rdHist = await rrh.json();
       ktcRedraftHistory = rdHist; redraftHistoryLoaded = true;
-      try { localStorage.setItem('dynastyCalc_ktcRedraftHistory_v1', JSON.stringify(rdHist)); }
-      catch(lse) { console.warn('Redraft history too large for localStorage:', lse.message); }
+      await dbSet('ktcRedraftHistory', rdHist);
       steps.push('RD Hist \u2713');
     } else { steps.push('RD Hist \u2717'); }
   } catch(e) { steps.push('RD Hist \u2717 ' + e.message); }
@@ -413,7 +468,7 @@ async function syncAll() {
     const rp = await fetch(PROXY + '/player-stats', { signal: AbortSignal.timeout(30000) });
     if (rp.ok) {
       const stats = await rp.json();
-      localStorage.setItem('dynastyCalc_playerStats_v1', JSON.stringify(stats));
+      await dbSet('playerStats', stats);
       playerStats = stats; statsLoaded = true;
       steps.push('Stats \u2713');
     } else { steps.push('Stats \u2717'); }
@@ -423,7 +478,7 @@ async function syncAll() {
     const rt = await fetch(PROXY + '/team-history', { signal: AbortSignal.timeout(15000) });
     if (rt.ok) {
       const th = await rt.json();
-      localStorage.setItem('dynastyCalc_teamHistory_v1', JSON.stringify(th));
+      await dbSet('teamHistory', th);
       teamHistory = th; teamHistoryLoaded = true;
       steps.push('Teams \u2713');
     } else { steps.push('Teams \u2717'); }
