@@ -1457,8 +1457,30 @@ function updateSubtitle() {
 // KTC NAME MATCHING
 // ════════════════════════════════════════════════════════════════════════════
 const PLAYER_ALIASES = {
-  'chig okonkwo':      'chigoziem okonkwo',
-  'chigoziem okonkwo': 'chigoziem okonkwo',
+  // Nickname ↔ full name (normalized forms — no periods, apostrophes, or suffixes)
+  'chig okonkwo':        'chigoziem okonkwo',
+  'chigoziem okonkwo':   'chigoziem okonkwo',
+  'gabe davis':          'gabriel davis',
+  'gabriel davis':       'gabriel davis',
+  'pat freiermuth':      'patrick freiermuth',
+  'patrick freiermuth':  'patrick freiermuth',
+  'scotty miller':       'scott miller',
+  'scott miller':        'scott miller',
+  'josh palmer':         'joshua palmer',
+  'joshua palmer':       'joshua palmer',
+  'josh jacobs':         'joshua jacobs',
+  'joshua jacobs':       'joshua jacobs',
+  'gabe moore':          'gabriel moore',
+  'gabriel moore':       'gabriel moore',
+  'robbie anderson':     'robby anderson',
+  'robby anderson':      'robby anderson',
+  'robert anderson':     'robby anderson',
+  'hollywood brown':     'marquise brown',
+  'marquise brown':      'marquise brown',
+  'terry mclaurin':      'terry mclaurin',
+  'terrace marshall':    'terrace marshall',
+  // Note: normalizeName already handles Jr/Sr/III/IV, periods, apostrophes.
+  // Add new entries here as mismatches are discovered.
 };
 
 function normalizeName(n) {
