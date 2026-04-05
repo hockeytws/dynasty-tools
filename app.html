@@ -1610,10 +1610,16 @@ function setupCalcSide(id) {
   const input = document.getElementById(`search-${id}`);
   const dd = document.getElementById(`dd-${id}`);
 
-  input.addEventListener('input', () => {
+  function showCalcDropdown() {
     const q = input.value.trim().toLowerCase();
-    if (q.length < 2) { dd.style.display = 'none'; return; }
-    const matches = allPlayers.filter(p => p.name.toLowerCase().includes(q)).slice(0, 20);
+    const exclude = new Set([...sides.a, ...sides.b].map(p => String(p.id)));
+    let matches;
+    if (q.length < 2) {
+      matches = allPlayers.filter(p => !exclude.has(String(p.id)) && p.position !== 'RDP')
+        .sort((a,b) => adjValue(b.value,b) - adjValue(a.value,a)).slice(0, 20);
+    } else {
+      matches = allPlayers.filter(p => !exclude.has(String(p.id)) && p.name.toLowerCase().includes(q)).slice(0, 20);
+    }
     if (!matches.length) { dd.style.display = 'none'; return; }
     dd.innerHTML = matches.map(p => `
       <div class="dropdown-item" data-id="${p.id}">
@@ -1635,13 +1641,15 @@ function setupCalcSide(id) {
           dd.style.display = 'none';
           rerenderCalcChips(id);
           recalc();
-          showEvenUp(id === 'a' ? 'b' : 'a'); // show even-up suggestions for the opposite side
+          showEvenUp(id === 'a' ? 'b' : 'a');
         }
       });
     });
-  });
+  }
+
+  input.addEventListener('input', showCalcDropdown);
   input.addEventListener('focus', () => {
-    // When focusing search, show even-up suggestions if there are assets on the other side
+    showCalcDropdown();
     const otherId = id === 'a' ? 'b' : 'a';
     if (sides[otherId].length > 0 && sides[id].length === 0) showEvenUp(id);
   });
@@ -2234,9 +2242,9 @@ function renderRankings() {
     const rosterN = t.rosterCount || '?';
     const expandHtml = isExp ? `<div class="roster-expand open">${renderRosterBody(t)}</div>` : `<div class="roster-expand"></div>`;
     return `<div class="rank-card ${isMine?'is-mine':''} ${isExp?'is-expanded':''}">
-      <div class="rank-header" onclick="toggleExpand('${esc(t.name)}')">
-        <div class="rank-num ${rankCls}">${i+1}</div>
-        <div class="rank-main">
+      <div class="rank-header">
+        <div class="rank-num ${rankCls}" onclick="toggleExpand('${esc(t.name)}')">${i+1}</div>
+        <div class="rank-main" onclick="toggleExpand('${esc(t.name)}')" style="cursor:pointer">
           <div class="rank-name">${t.name}${isMine?' <span class="badge badge-you">YOU</span>':''}<span class="expand-arrow">▾</span></div>
           <div class="rank-detail">
             <span>📋 ${rosterN}</span>
@@ -2247,7 +2255,10 @@ function renderRankings() {
             ${t.posVals.PICKS>0?`<span style="color:var(--RDP)">PICKS ${fmtV(t.posVals.PICKS)}</span>`:''}
           </div>
         </div>
-        <div class="rank-right"><div class="rank-val">${fmtV(t.total)}</div><div class="rank-val-lbl">ADJ VALUE</div></div>
+        <div class="rank-right" style="display:flex;align-items:center;gap:6px;">
+          <div onclick="toggleExpand('${esc(t.name)}')" style="cursor:pointer;text-align:right"><div class="rank-val">${fmtV(t.total)}</div><div class="rank-val-lbl">ADJ VALUE</div></div>
+          <button onclick="event.stopPropagation();openTCModal('${esc(currentLeague)}',findTeamSlug('${esc(currentLeague)}','${esc(t.name)}'))" title="Team History" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 6px;cursor:pointer;font-size:13px;color:var(--accent4);opacity:0.6;transition:opacity 0.15s;flex-shrink:0;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">📈</button>
+        </div>
       </div>
       <div class="rank-bar-row"><div class="rank-bar"><div class="rank-bar-fill" style="width:${pct}%"></div></div></div>
       <div class="pos-bar-row">${posSegs}</div>
@@ -2312,9 +2323,9 @@ function renderRedraftRankings() {
 
     const isExp = expandedTeam === t.name;
     return `<div class="rank-card ${isMine?'is-mine':''} ${isExp?'is-expanded':''}">
-      <div class="rank-header" onclick="toggleExpand('${esc(t.name)}')">
-        <div class="rank-num ${rankCls}">${i+1}</div>
-        <div class="rank-main">
+      <div class="rank-header">
+        <div class="rank-num ${rankCls}" onclick="toggleExpand('${esc(t.name)}')">${i+1}</div>
+        <div class="rank-main" onclick="toggleExpand('${esc(t.name)}')" style="cursor:pointer">
           <div class="rank-name">${t.name}${isMine?' <span class="badge badge-you">YOU</span>':''}<span class="expand-arrow">▾</span></div>
           <div class="rank-detail">
             <span style="color:var(--QB)">QB ${fmtV(t.rdPosVals.QB||0)}</span>
@@ -2324,10 +2335,13 @@ function renderRedraftRankings() {
             ${projHtml ? `<span style="margin-left:4px">${projHtml}</span>` : ''}
           </div>
         </div>
-        <div class="rank-right">
-          <div class="rank-val" style="color:var(--accent3)">${fmtV(t.rdTotal)}</div>
-          <div class="rank-val-lbl">REDRAFT VAL</div>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px">DYN: ${fmtV(t.total)}</div>
+        <div class="rank-right" style="display:flex;align-items:center;gap:6px;">
+          <div onclick="toggleExpand('${esc(t.name)}')" style="cursor:pointer;text-align:right">
+            <div class="rank-val" style="color:var(--accent3)">${fmtV(t.rdTotal)}</div>
+            <div class="rank-val-lbl">REDRAFT VAL</div>
+            <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px">DYN: ${fmtV(t.total)}</div>
+          </div>
+          <button onclick="event.stopPropagation();openTCModal('${esc(currentLeague)}',findTeamSlug('${esc(currentLeague)}','${esc(t.name)}'))" title="Team History" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 6px;cursor:pointer;font-size:13px;color:var(--accent4);opacity:0.6;transition:opacity 0.15s;flex-shrink:0;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">📈</button>
         </div>
       </div>
       <div class="rank-bar-row"><div class="rank-bar"><div class="rank-bar-fill" style="width:${pct}%;background:linear-gradient(90deg,var(--accent3),var(--accent2))"></div></div></div>
@@ -2419,10 +2433,10 @@ function renderRosterBody(team) {
       const val = adjVal(p.name, pos, currentLeague);
       const key = `${p.name}||${pos}||${team.name}`;
       const state = lClickState[key];
-      return `<div class="ppill"
-        onclick="openPlayerCard('${esc(p.name)}',currentLeague)" style="cursor:pointer">
+      return `<div class="ppill ${state?'state-'+state:''}"
+        onclick="lHandlePlayerClick('${esc(p.name)}','${pos}','${esc(team.name)}',${val})">
         <span class="dot" style="background:${posColor(pos)}"></span>
-        <span class="ppill-name">${p.name}</span>
+        <span class="ppill-name" onclick="event.stopPropagation();openPlayerCard('${esc(p.name)}',currentLeague)" style="cursor:pointer">${p.name}</span>
         <span class="ppill-team">${p.nflTeam}</span>
         <span class="ppill-val ${val>0?'has-val':''}">${fmtV(val)}${rawKtcSpan(p.name,pos)}</span>
       </div>`;
@@ -3049,26 +3063,28 @@ function renderLeagueTradeCalc() {
 
   // Search dropdown items for a team
   function searchDropdown(teamName, side, query) {
-    if (!teamName || !query || query.length < 1) return '';
+    if (!teamName) return '';
     const t = teams.find(x => x.name === teamName);
     if (!t) return '';
-    const q = query.toLowerCase();
+    const q = (query || '').toLowerCase();
+    const selectedArr = side === 'a' ? ltcSelectedA : ltcSelectedB;
     const results = [];
     ['QB','RB','WR','TE'].forEach(pos => {
       (t.players[pos]||[]).forEach(p => {
-        if (p.name.toLowerCase().includes(q)) {
-          const val = adjVal(p.name, pos, currentLeague);
-          results.push({ name: p.name, pos, val, teamName, display: p.name });
-        }
+        if (selectedArr.some(x => x.name===p.name && x.pos===pos)) return;
+        if (q && !p.name.toLowerCase().includes(q)) return;
+        const val = adjVal(p.name, pos, currentLeague);
+        results.push({ name: p.name, pos, val, teamName, display: p.name });
       });
     });
     (t.parsedPicks || []).forEach(pick => {
       const display = `${pick.year} ${pick.pick}`;
-      if (display.toLowerCase().includes(q) || pick.ktcName.toLowerCase().includes(q)) {
-        const val = adjVal(pick.ktcName, 'RDP', currentLeague);
-        results.push({ name: pick.ktcName, pos: 'RDP', val, teamName, display });
-      }
+      if (selectedArr.some(x => x.name===pick.ktcName && x.pos==='RDP')) return;
+      if (q && !display.toLowerCase().includes(q) && !pick.ktcName.toLowerCase().includes(q)) return;
+      const val = adjVal(pick.ktcName, 'RDP', currentLeague);
+      results.push({ name: pick.ktcName, pos: 'RDP', val, teamName, display });
     });
+    results.sort((a,b) => b.val - a.val);
     if (!results.length) return `<div class="dropdown" style="display:block;position:relative;left:0;right:0;top:0;border-radius:8px;border-top:1px solid var(--accent)"><div style="padding:10px 12px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)">No matches</div></div>`;
     return `<div class="dropdown" style="display:block;position:relative;left:0;right:0;top:0;border-radius:8px;border-top:1px solid var(--accent)">
       ${results.slice(0,10).map(r => `
@@ -3150,7 +3166,7 @@ function renderLeagueTradeCalc() {
             ${!ltcTeamA?'disabled':''} value="${esc(ltcSearchA)}"
             oninput="ltcSearchA=this.value;renderLeagues()" autocomplete="off" autocorrect="off" autocapitalize="off">
         </div>
-        ${ltcSearchA ? searchDropdown(ltcTeamA,'a',ltcSearchA) : ''}
+        ${ltcTeamA ? searchDropdown(ltcTeamA,'a',ltcSearchA) : ''}
         ${ltcEvenUp('a')}
         <div class="players-list">${assetChips(ltcSelectedA,'a')}</div>
       </div>
@@ -3173,7 +3189,7 @@ function renderLeagueTradeCalc() {
             ${!ltcTeamB?'disabled':''} value="${esc(ltcSearchB)}"
             oninput="ltcSearchB=this.value;renderLeagues()" autocomplete="off" autocorrect="off" autocapitalize="off">
         </div>
-        ${ltcSearchB ? searchDropdown(ltcTeamB,'b',ltcSearchB) : ''}
+        ${ltcTeamB ? searchDropdown(ltcTeamB,'b',ltcSearchB) : ''}
         ${ltcEvenUp('b')}
         <div class="players-list">${assetChips(ltcSelectedB,'b')}</div>
       </div>
@@ -4266,23 +4282,16 @@ function renderOverviewSection() {
       }).join('');
       // Truncate name to ~12 chars for space
       const shortName = t.name.length > 13 ? t.name.slice(0, 12) + '…' : t.name;
-      return `<div class="ov-team-bar-row" onclick="ovGoToTeam('${esc(lDef.id)}','${esc(t.name)}','${targetSection}')">
-          <span class="ov-team-bar-name ${isMe?'is-mine':''}">${shortName}</span>
-          <div class="ov-team-bar-track">${segs}</div>
-          <span class="ov-team-bar-val" style="${isMe?'color:var(--accent);font-weight:700;':''}">${fmtV(tVal)}</span>
+      return `<div class="ov-team-bar-row" style="position:relative">
+          <span class="ov-team-bar-name ${isMe?'is-mine':''}" onclick="ovGoToTeam('${esc(lDef.id)}','${esc(t.name)}','${targetSection}')">${shortName}</span>
+          <div class="ov-team-bar-track" onclick="ovGoToTeam('${esc(lDef.id)}','${esc(t.name)}','${targetSection}')">${segs}</div>
+          <span class="ov-team-bar-val" style="${isMe?'color:var(--accent);font-weight:700;':''}" onclick="ovGoToTeam('${esc(lDef.id)}','${esc(t.name)}','${targetSection}')">${fmtV(tVal)}</span>
+          <span onclick="event.stopPropagation();openTCModal('${esc(lDef.id)}',findTeamSlug('${esc(lDef.id)}','${esc(t.name)}'))" title="Team History" style="cursor:pointer;font-size:11px;flex-shrink:0;padding:0 2px;opacity:0.45;transition:opacity 0.15s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.45">📈</span>
         </div>`;
     }).join('');
 
     // Find team slug for history lookup
-    const mySlug = Object.keys((leagueData[lDef.id]?.teams) || {}).find(slug => {
-      const t = leagueData[lDef.id].teams[slug];
-      return (t.teamName || t.name || slug).toLowerCase().includes(MY_TEAM.toLowerCase()) ||
-             MY_TEAM.toLowerCase().includes((t.teamName || t.name || slug).toLowerCase());
-    }) || '';
-    const thData = teamHistory[lDef.id]?.teams;
-    const thSlug = thData ? (Object.keys(thData).find(s =>
-      (thData[s].names||[]).some(n => n.toLowerCase().includes('counterfeit') || MY_TEAM.toLowerCase().includes(n.toLowerCase()))
-    ) || Object.keys(thData).find(s => s.includes('counterfeit')) || '') : '';
+    const thSlug = findTeamSlug(lDef.id, MY_TEAM);
 
     return `
       <div class="ov-league-card">
@@ -4621,7 +4630,7 @@ function buildSparklineSVG(playerName, sortedDates, lookbackDays, w, h) {
     if (d < cutoffStr) continue;
     const snap = ktcHistory[d];
     if (!snap || !snap[playerName]) continue;
-    pts.push(snap[playerName].value || 0);
+    pts.push(snap[playerName].tep || snap[playerName].value || 0);
   }
   if (pts.length < 2) {
     return `<svg width="${w}" height="${h}" style="opacity:0.15"><line x1="2" y1="${h/2}" x2="${w-2}" y2="${h/2}" stroke="var(--border2)" stroke-width="1.5"/></svg>`;
@@ -4722,6 +4731,7 @@ function openPlayerCard(name, leagueId = null) {
   document.body.dataset.scrollY = scrollY;
   modal.innerHTML = buildPlayerCardHTML(name);
   overlay.style.display = 'flex';
+  requestAnimationFrame(() => { modal.scrollTop = 0; });
 }
 
 function closePlayerCard() {
@@ -4746,16 +4756,23 @@ function pcSelectSeason(yr) {
   if (el && pcCurrentPlayer) el.outerHTML = buildPCScoringSection(pcCurrentPlayer);
 }
 
+let _pcHistDebounce = null;
 function pcSetHistoryTab(tab) {
   pcHistoryTab = tab;
-  const el = document.getElementById('pc-hist-section');
-  if (el && pcCurrentPlayer) el.outerHTML = buildPCValueHistorySection(pcCurrentPlayer);
+  if (_pcHistDebounce) cancelAnimationFrame(_pcHistDebounce);
+  _pcHistDebounce = requestAnimationFrame(() => {
+    const el = document.getElementById('pc-hist-section');
+    if (el && pcCurrentPlayer) el.outerHTML = buildPCValueHistorySection(pcCurrentPlayer);
+  });
 }
 
 function pcSetHistoryFormat(fmt) {
   pcHistoryFormat = fmt;
-  const el = document.getElementById('pc-hist-section');
-  if (el && pcCurrentPlayer) el.outerHTML = buildPCValueHistorySection(pcCurrentPlayer);
+  if (_pcHistDebounce) cancelAnimationFrame(_pcHistDebounce);
+  _pcHistDebounce = requestAnimationFrame(() => {
+    const el = document.getElementById('pc-hist-section');
+    if (el && pcCurrentPlayer) el.outerHTML = buildPCValueHistorySection(pcCurrentPlayer);
+  });
 }
 
 function buildPlayerCardHTML(name) {
@@ -4844,30 +4861,13 @@ function buildPCValueHistorySection(name) {
   // Build chart points for selected field
   const histDates = Object.keys(ktcHistory).sort();
   const pts = [];
-  // KTC history: 'value' = SF no-TEP (often 0 from backfill), 'oneqb' = 1QB no-TEP
-  // Fallback chain: sf→tep→oneqb, oneqb→tep_1qb→oneqb, tep variants→oneqb variants
-  const FALLBACKS = {
-    'value': ['tep','tepp','teppp','oneqb'],
-    'oneqb': ['tep_1qb','tepp_1qb','teppp_1qb'],
-    'tep':   ['tepp','teppp','value','oneqb'],
-    'tepp':  ['tep','teppp','value','oneqb'],
-    'teppp': ['tepp','tep','value','oneqb'],
-    'tep_1qb':   ['tepp_1qb','teppp_1qb','oneqb'],
-    'tepp_1qb':  ['tep_1qb','teppp_1qb','oneqb'],
-    'teppp_1qb': ['tepp_1qb','tep_1qb','oneqb'],
-  };
-  const fallbacks = FALLBACKS[field] || [];
-  let usedFallback = false;
+  // For SF no-TEP field ('value'), TEs often have 0 — fall back to tep field
+  const fallbackField = (field === 'value') ? 'tep' : (field === 'oneqb') ? 'tep_1qb' : null;
   for (const d of histDates) {
     const snap = ktcHistory[d];
     if (!snap || !snap[name]) continue;
     let v = snap[name][field] || 0;
-    if (v <= 0) {
-      for (const fb of fallbacks) {
-        v = snap[name][fb] || 0;
-        if (v > 0) { usedFallback = true; break; }
-      }
-    }
+    if (v <= 0 && fallbackField) v = snap[name][fallbackField] || 0;
     if (v <= 0) continue;
     pts.push({ d, v });
   }
@@ -4886,12 +4886,9 @@ function buildPCValueHistorySection(name) {
     }).join('')}
   </div>`;
 
-  const fallbackNote = usedFallback
-    ? ` <span style="color:var(--accent2);font-size:7px" title="Exact format not in history — showing closest available">~APPROX</span>`
-    : '';
   const sectionTitle = isDyn
-    ? `DYNASTY VALUE HISTORY · <span style="color:var(--accent4);font-size:8px">${FMT_LABEL[pcHistoryFormat]||pcHistoryFormat}</span>${fallbackNote}`
-    : `REDRAFT VALUE HISTORY · <span style="color:var(--accent3);font-size:8px">${FMT_LABEL[pcHistoryFormat]||pcHistoryFormat}</span>${fallbackNote}`;
+    ? `DYNASTY VALUE HISTORY · <span style="color:var(--accent4);font-size:8px">${FMT_LABEL[pcHistoryFormat]||pcHistoryFormat}</span>`
+    : `REDRAFT VALUE HISTORY · <span style="color:var(--accent3);font-size:8px">${FMT_LABEL[pcHistoryFormat]||pcHistoryFormat}</span>`;
 
   const noDataMsg = `<div class="pc-chart-wrap">${tabRow}${fmtPills}<div class="pc-no-data">No history yet for this format · Run backfill or wait for daily snapshots</div></div>`;
 
@@ -5022,7 +5019,7 @@ function buildPCScoringSection(name) {
     const maxW = Math.max(...wVals, 0.1);
     const nonZero = wVals.filter(v => v > 0);
     const avg = nonZero.length ? nonZero.reduce((a,b)=>a+b,0)/nonZero.length : 0;
-    const cW=560,cH=90,pL=24,pR=8,pT=10,pB=20;
+    const cW=560,cH=70,pL=24,pR=8,pT=6,pB=16;
     const iW2=cW-pL-pR, iH2=cH-pT-pB;
     const bw2 = Math.max(3, iW2/weeks.length - 2);
     const avgY = pT + iH2 - (avg/maxW)*iH2;
@@ -5031,18 +5028,10 @@ function buildPCScoringSection(name) {
       const barH2 = (v/maxW)*iH2;
       const y2 = pT+iH2-barH2;
       const col = v===0?'var(--border2)':v>=20?'var(--accent)':v>=10?'var(--accent4)':'var(--accent2)';
-      // Show value label above bar if bar is tall enough, otherwise below
-      const labelY = barH2 > 14 ? y2 + barH2/2 : y2 - 3;
-      const labelAnchor = 'middle';
-      const valLabel = v > 0
-        ? `<text x="${x.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="${labelAnchor}" dominant-baseline="${barH2>14?'middle':'auto'}" fill="${barH2>14?'var(--bg)':'var(--muted)'}" font-size="7" font-family="DM Mono,monospace" opacity="0.9">${v.toFixed(1)}</text>`
-        : '';
-      const wkLabel = `<text x="${x.toFixed(1)}" y="${(pT+iH2+13).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace">W${weeks[i]}</text>`;
-      return `<rect x="${(x-bw2/2).toFixed(1)}" y="${y2.toFixed(1)}" width="${bw2.toFixed(1)}" height="${Math.max(0,barH2).toFixed(1)}" rx="1.5" fill="${col}" opacity="0.85"/>${valLabel}`;
+      return `<rect x="${(x-bw2/2).toFixed(1)}" y="${y2.toFixed(1)}" width="${bw2.toFixed(1)}" height="${Math.max(0,barH2).toFixed(1)}" rx="1.5" fill="${col}" opacity="0.85"/>`;
     }).join('');
-    // Show week labels at start, middle, end only (bars already show values)
     const wLabels = [0,Math.floor(weeks.length/2),weeks.length-1].filter((v,i,a)=>a.indexOf(v)===i).map(i =>
-      `<text x="${(pL+(i/(Math.max(weeks.length-1,1)))*iW2).toFixed(1)}" y="${(pT+iH2+13).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace">Wk ${weeks[i]}</text>`
+      `<text x="${(pL+(i/(Math.max(weeks.length-1,1)))*iW2).toFixed(1)}" y="${(pT+iH2+13).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">Wk ${weeks[i]}</text>`
     ).join('');
     const avgLine = avg > 0
       ? `<line x1="${pL}" y1="${avgY.toFixed(1)}" x2="${(pL+iW2).toFixed(1)}" y2="${avgY.toFixed(1)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>
@@ -5062,26 +5051,6 @@ function buildPCScoringSection(name) {
   const tepNote2 = tepBonus > 0 && season.avgRec != null ? ` · ${ppgAdj.toFixed(1)} w/TEP` : '';
   const gStr = `${season.games} GM · ${season.totalPoints.toFixed(0)} PTS${tepNote2}${season.avgSnapPct>0?' · '+season.avgSnapPct.toFixed(0)+'% SNAP':''}`;
 
-  // Game-by-game table for selected season
-  const gameRows = season.byWeek ? Object.keys(season.byWeek).map(Number).sort((a,b)=>a-b).map(wk => {
-    let pts = season.byWeek[wk] || 0;
-    if (tepBonus > 0 && (season.byWeekRec||{})[wk] != null) pts += tepBonus * season.byWeekRec[wk];
-    const col = pts===0?'var(--muted)':pts>=20?'var(--accent)':pts>=10?'var(--accent4)':'var(--accent2)';
-    const snaps = season.byWeekSnaps ? (season.byWeekSnaps[wk] || '—') : '—';
-    return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)">
-      <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);width:28px;flex-shrink:0">Wk ${wk}</span>
-      <div style="flex:1;height:5px;background:var(--surface3);border-radius:3px;overflow:hidden">
-        <div style="height:100%;width:${Math.min(100,(pts/Math.max(...Object.values(season.byWeek)))*100).toFixed(1)}%;background:${col};border-radius:3px"></div>
-      </div>
-      <span style="font-family:'Bebas Neue',sans-serif;font-size:14px;color:${col};width:36px;text-align:right;flex-shrink:0">${pts.toFixed(1)}</span>
-    </div>`;
-  }).join('') : '';
-
-  const gameLog = gameRows ? `<div style="margin-top:10px">
-    <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--muted);letter-spacing:1.5px;margin-bottom:4px">GAME LOG ${pcHistorySeason}</div>
-    ${gameRows}
-  </div>` : '';
-
   return `<div class="pc-section" id="pc-scoring-section">
     <div class="pc-section-title">SCORING HISTORY <span style="color:var(--muted);font-size:8px">· ${fmtStr}</span></div>
     <div class="pc-chart-wrap">
@@ -5089,7 +5058,6 @@ function buildPCScoringSection(name) {
       <div class="pc-season-grid">${pills}</div>
       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin:6px 0">${pcHistorySeason}: ${gStr}</div>
       ${weeklyChart}
-      ${gameLog}
     </div>
   </div>`;
 }
@@ -5098,6 +5066,22 @@ function buildPCScoringSection(name) {
 // ════════════════════════════════════════════════════════════════════════════
 // TEAM HISTORY MODAL
 // ════════════════════════════════════════════════════════════════════════════
+function findTeamSlug(leagueId, teamName) {
+  const thData = teamHistory[leagueId]?.teams;
+  if (thData) {
+    const exact = Object.keys(thData).find(s =>
+      (thData[s].names || []).some(n => n.toLowerCase() === teamName.toLowerCase())
+    );
+    if (exact) return exact;
+    const partial = Object.keys(thData).find(s =>
+      s.toLowerCase().includes(teamName.toLowerCase().slice(0, 10)) ||
+      (thData[s].names || []).some(n => n.toLowerCase().includes(teamName.toLowerCase().slice(0, 10)))
+    );
+    if (partial) return partial;
+  }
+  return teamName;
+}
+
 function openTCModal(leagueId, teamSlug) {
   loadTeamHistory().then(() => renderTCModal(leagueId, teamSlug)).catch(() => renderTCModal(leagueId, teamSlug));
   const overlay = document.getElementById('tc-overlay');
@@ -5130,12 +5114,50 @@ function renderTCModal(leagueId, teamSlug) {
   const tData = lData?.teams?.[teamSlug];
 
   if (!tData) {
+    // Show live values + roster even without historical snapshots
+    const d = leagueData[leagueId];
+    const liveTeam = d?.teams?.find(t => t.name === teamSlug || t.name?.toLowerCase() === teamSlug?.toLowerCase());
+    let liveRosterHtml = '';
+    let liveStatsHtml = '';
+    if (liveTeam) {
+      let dynTotal = 0, rdTotal = 0;
+      const playerNames = [];
+      ['QB','RB','WR','TE'].forEach(pos => {
+        (liveTeam.players[pos]||[]).forEach(p => {
+          playerNames.push(p.name);
+          dynTotal += adjVal(p.name, pos, leagueId);
+          rdTotal += adjRedraftValue(p.name, pos, 'tep');
+        });
+      });
+      liveStatsHtml = `<div class="tc-stat-row">
+        <div class="tc-stat"><div class="tc-stat-val" style="color:var(--accent)">${fmtV(dynTotal)}</div><div class="tc-stat-lbl">DYNASTY</div></div>
+        <div class="tc-stat"><div class="tc-stat-val" style="color:var(--accent3)">${fmtV(rdTotal)}</div><div class="tc-stat-lbl">REDRAFT</div></div>
+        <div class="tc-stat"><div class="tc-stat-val">${playerNames.length}</div><div class="tc-stat-lbl">PLAYERS</div></div>
+      </div>`;
+      liveRosterHtml = playerNames.length ? `<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1.5px;margin-bottom:6px;margin-top:12px">CURRENT ROSTER</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          ${playerNames.map(name => {
+            const ktcp = getKTCPlayer(name);
+            const pos = ktcp?.position || '?';
+            const col = posColor(pos);
+            return `<span onclick="closeTCModal();openPlayerCard('${esc(name)}','${leagueId}')" style="font-family:'DM Mono',monospace;font-size:9px;padding:2px 7px;border-radius:4px;background:${col}18;color:${col};cursor:pointer;border:1px solid ${col}44">${name}</span>`;
+          }).join('')}
+        </div>` : '';
+    }
     modal.innerHTML = `
       <div class="tc-header">
-        <div class="tc-title">${lDef?.name || leagueId}</div>
+        <div>
+          <div class="tc-title">${teamSlug}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">${lDef?.name || leagueId}</div>
+        </div>
         <button class="pc-close" onclick="closeTCModal()">✕</button>
       </div>
-      <div class="tc-body"><div class="tc-no-data">No team history data yet.<br>Run a team snapshot or wait for nightly update.</div></div>`;
+      <div class="tc-body">
+        ${liveStatsHtml}
+        <div class="tc-no-data" style="margin-top:12px">No historical snapshots yet.<br>Run a team snapshot or wait for nightly update.</div>
+        ${liveRosterHtml}
+      </div>`;
+    requestAnimationFrame(() => { modal.scrollTop = 0; });
     return;
   }
 
@@ -5209,6 +5231,22 @@ function renderTCModal(leagueId, teamSlug) {
          }).join('')}
        </div>` : '';
 
+  // Transactions section
+  const txns = tData.transactions || [];
+  const txnHtml = txns.length ? `
+    <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1.5px;margin:12px 0 6px">TRANSACTIONS · ${txns.length}</div>
+    <div style="max-height:200px;overflow-y:auto;scrollbar-width:thin">
+      ${txns.slice().reverse().map(tx => {
+        const col = tx.type === 'add' ? 'var(--accent)' : 'var(--accent2)';
+        const icon = tx.type === 'add' ? '+' : '−';
+        return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-family:'DM Mono',monospace;font-size:10px;border-bottom:1px solid var(--border)">
+          <span style="color:${col};font-weight:700;width:14px;text-align:center">${icon}</span>
+          <span style="flex:1;cursor:pointer" onclick="closeTCModal();openPlayerCard('${esc(tx.player)}','${leagueId}')">${tx.player}</span>
+          <span style="color:var(--muted);font-size:8px">${tx.date || ''}</span>
+        </div>`;
+      }).join('')}
+    </div>` : '';
+
   modal.innerHTML = `
     <div class="tc-header">
       <div>
@@ -5223,8 +5261,10 @@ function renderTCModal(leagueId, teamSlug) {
         ${dynChart}
         <div style="margin-top:10px">${rdChart}</div>
       </div>
+      ${txnHtml}
       ${rosterHtml}
     </div>`;
+  requestAnimationFrame(() => { modal.scrollTop = 0; });
 }
 
 // ════════════════════════════════════════════════════════════════════════════

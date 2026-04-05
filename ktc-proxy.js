@@ -67,6 +67,116 @@ function saveTeamHistory() {
   catch(e) { console.error('saveTeamHistory failed:', e.message); }
 }
 
+// ── Automated team value snapshot with transaction tracking ────────────────────
+// Computes dynasty + redraft values per team per league and saves to team-history.json.
+// Also detects roster changes (adds/drops) by comparing to the previous snapshot.
+function snapshotTeamValues(dateStr) {
+  if (!cachedData || !cachedData.length) { console.log('snapshotTeamValues: no KTC data'); return; }
+  if (!Object.keys(ffpcCache).length) { console.log('snapshotTeamValues: no FFPC data'); return; }
+
+  const DEDUCTION = 2500, PICK_DEDUCTION = 2400, SCALE = 10000, EXP = 1.25, MAX = 10000;
+  const RD_FLOOR = 4000, RD_EXP = 1.25;
+
+  // Build KTC lookup
+  const ktcLookup = {};
+  cachedData.forEach(p => { if (p.name) ktcLookup[p.name.toLowerCase()] = p; });
+
+  // Build redraft lookup
+  const rdLookup = {};
+  if (redraftData) redraftData.forEach(p => { if (p.name) rdLookup[p.name.toLowerCase()] = p; });
+
+  function dynVal(name) {
+    const p = ktcLookup[name.toLowerCase()];
+    if (!p) return 0;
+    let base = p.value || 0;
+    if (p.position === 'TE' && p.tep) base = p.tep;
+    const above = base - DEDUCTION;
+    if (above <= 0) return 0;
+    return SCALE * Math.pow(above, EXP) / Math.pow(MAX - DEDUCTION, EXP);
+  }
+
+  function rdVal(name) {
+    const p = rdLookup[name.toLowerCase()];
+    if (!p) return 0;
+    let base = p.sf || p.value || 0;
+    if (p.position === 'TE' && p.tep) base = p.tep;
+    const above = base - RD_FLOOR;
+    if (above <= 0) return 0;
+    return SCALE * Math.pow(above, RD_EXP) / Math.pow(MAX - RD_FLOOR, RD_EXP);
+  }
+
+  function slugify(name) {
+    return name.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
+  }
+
+  let totalSnapshots = 0;
+  for (const [leagueId, leagueCache] of Object.entries(ffpcCache)) {
+    if (!leagueCache.teams || !leagueCache.teams.length) continue;
+    if (!teamHistory[leagueId]) teamHistory[leagueId] = { teams: {} };
+
+    for (const team of leagueCache.teams) {
+      const slug = slugify(team.name);
+      if (!teamHistory[leagueId].teams[slug]) {
+        teamHistory[leagueId].teams[slug] = { names: [], dates: {}, transactions: [] };
+      }
+      const dest = teamHistory[leagueId].teams[slug];
+
+      // Track team name changes
+      if (!dest.names.includes(team.name)) dest.names.push(team.name);
+
+      // Collect all player names
+      const playerNames = [];
+      ['QB','RB','WR','TE'].forEach(pos => {
+        (team.players[pos] || []).forEach(p => { if (p.name) playerNames.push(p.name); });
+      });
+
+      // Compute values
+      let dTotal = 0, rTotal = 0;
+      playerNames.forEach(n => { dTotal += dynVal(n); rTotal += rdVal(n); });
+
+      // Detect transactions by comparing to previous snapshot
+      const prevDates = Object.keys(dest.dates).sort();
+      if (prevDates.length > 0) {
+        const prevDate = prevDates[prevDates.length - 1];
+        const prevPlayers = dest.dates[prevDate].players || [];
+        const prevSet = new Set(prevPlayers.map(n => n.toLowerCase()));
+        const currSet = new Set(playerNames.map(n => n.toLowerCase()));
+
+        // Find adds (on current roster but not previous)
+        playerNames.forEach(n => {
+          if (!prevSet.has(n.toLowerCase())) {
+            dest.transactions.push({ type: 'add', player: n, date: dateStr });
+          }
+        });
+        // Find drops (on previous roster but not current)
+        prevPlayers.forEach(n => {
+          if (!currSet.has(n.toLowerCase())) {
+            dest.transactions.push({ type: 'drop', player: n, date: dateStr });
+          }
+        });
+      }
+
+      // Save snapshot (skip if same date already exists)
+      if (!dest.dates[dateStr]) {
+        dest.dates[dateStr] = {
+          dynVal: Math.round(dTotal),
+          rdVal: Math.round(rTotal),
+          playerCount: playerNames.length,
+          players: playerNames,
+        };
+        totalSnapshots++;
+      }
+    }
+  }
+
+  if (totalSnapshots > 0) {
+    saveTeamHistory();
+    console.log(`Team snapshot saved: ${dateStr} (${totalSnapshots} teams across ${Object.keys(ffpcCache).length} leagues)`);
+  } else {
+    console.log(`Team snapshot: ${dateStr} already exists for all teams`);
+  }
+}
+
 function saveHistory() {
   fs.writeFileSync(HISTORY_FILE, JSON.stringify(ktcHistory));
 }
@@ -153,10 +263,14 @@ function scheduleDailySnapshot() {
         const rdPlayers = await scrapeKTCRedraft();
         saveRedraftCache(rdPlayers);
       } catch(e) { console.warn('Daily redraft scrape failed:', e.message); }
+      // Snapshot team values with transaction tracking
+      try { snapshotTeamValues(todayStr()); } catch(e) { console.warn('Daily team snapshot failed:', e.message); }
     } catch(e) {
       // Scrape failed — still snapshot with cached data if available
       console.warn('Daily snapshot scrape failed:', e.message);
       if (cachedData) fillMissedSnapshots(cachedData);
+      // Still try team snapshot with whatever FFPC data we have
+      try { snapshotTeamValues(todayStr()); } catch(e2) {}
     }
     // Schedule next day
     scheduleDailySnapshot();
@@ -955,6 +1069,19 @@ const requestHandler = async (req, res) => {
   if (req.method === 'GET' && url === '/team-history') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(teamHistory));
+    return;
+  }
+
+  // POST /team-history/snapshot — trigger team value snapshot with transaction tracking
+  if (req.method === 'POST' && url === '/team-history/snapshot') {
+    try {
+      snapshotTeamValues(todayStr());
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, date: todayStr(), leagues: Object.keys(ffpcCache).length }));
+    } catch(e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
     return;
   }
 
@@ -1996,6 +2123,10 @@ const finalHandler = async (req, res) => {
 if (cachedData && cachedData.length) {
   fillMissedSnapshots(cachedData);
 }
+// Auto-snapshot team values on boot if we have both KTC + FFPC data
+if (cachedData && cachedData.length && Object.keys(ffpcCache).length) {
+  snapshotTeamValues(todayStr());
+}
 scheduleDailySnapshot();
 
 const server = tlsOptions
@@ -2008,6 +2139,7 @@ server.listen(3001, () => {
   console.log('  KTC dynasty:  GET /ktc, POST /scrape, GET /scrape-status');
   console.log('  KTC redraft:  GET /ktc-redraft, POST /scrape-redraft, GET /scrape-redraft-status');
   console.log('  KTC history:  GET /ktc-history, POST /ktc-history/snapshot, POST /ktc-history/backfill');
+  console.log('  Team history: GET /team-history, POST /team-history/snapshot');
   console.log('  Player stats: GET /player-stats');
   console.log('  FFPC: GET /ffpc, POST /ffpc/:leagueId, GET /ffpc/:leagueId');
   console.log('  Scout: GET /scout-lookup?email=...');
