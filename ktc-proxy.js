@@ -383,9 +383,17 @@ async function scrapeKTC() {
 
     const players = await page.evaluate(() => {
       const VALID_POS = ['QB','RB','WR','TE','RDP'];
+      function tepVal(obj, fallback) {
+        // obj is like sf.tep = { value: 8839, rank: 6, ... }
+        if (obj && typeof obj === 'object' && 'value' in obj) return obj.value;
+        if (typeof obj === 'number') return obj;
+        return fallback;
+      }
       return window.playersArray.map(p => {
         const sf  = p.superflexValues || {};
         const qb1 = p.oneQBValues     || {};
+        const sfVal  = sf.value  || 0;
+        const qb1Val = qb1.value || 0;
         return {
           id:         String(p.playerID || p.slug || p.playerName),
           name:       p.playerName,
@@ -394,15 +402,15 @@ async function scrapeKTC() {
           age:        p.age || 0,
           calculated: p.calculated || false,
           // Superflex values
-          value:    sf.value   || 0,
-          tep:      (sf.tep   && sf.tep.value)   || (sf.tep   && typeof sf.tep === 'number' ? sf.tep : 0) || sf.value || 0,
-          tepp:     (sf.tepp  && sf.tepp.value)  || (sf.tepp  && typeof sf.tepp === 'number' ? sf.tepp : 0) || sf.value || 0,
-          teppp:    (sf.teppp && sf.teppp.value) || (sf.teppp && typeof sf.teppp === 'number' ? sf.teppp : 0) || sf.value || 0,
+          value:    sfVal,
+          tep:      tepVal(sf.tep,   sfVal),
+          tepp:     tepVal(sf.tepp,  sfVal),
+          teppp:    tepVal(sf.teppp, sfVal),
           // 1QB values
-          oneqb:        qb1.value   || 0,
-          tep_1qb:      (qb1.tep   && qb1.tep.value)   || (qb1.tep   && typeof qb1.tep === 'number' ? qb1.tep : 0) || qb1.value || 0,
-          tepp_1qb:     (qb1.tepp  && qb1.tepp.value)  || (qb1.tepp  && typeof qb1.tepp === 'number' ? qb1.tepp : 0) || qb1.value || 0,
-          teppp_1qb:    (qb1.teppp && qb1.teppp.value) || (qb1.teppp && typeof qb1.teppp === 'number' ? qb1.teppp : 0) || qb1.value || 0,
+          oneqb:        qb1Val,
+          tep_1qb:      tepVal(qb1.tep,   qb1Val),
+          tepp_1qb:     tepVal(qb1.tepp,  qb1Val),
+          teppp_1qb:    tepVal(qb1.teppp, qb1Val),
         };
       }).filter(p => {
         if ((!p.value && !p.oneqb) || !p.name) return false;
@@ -476,24 +484,31 @@ async function scrapeKTCRedraft() {
     console.log('Redraft player count:', debugInfo.count);
 
     const players = await page.evaluate(() => {
+      function tepVal(obj, fallback) {
+        if (obj && typeof obj === 'object' && 'value' in obj) return obj.value;
+        if (typeof obj === 'number') return obj;
+        return fallback;
+      }
       return window.playersArray.map(p => {
         const sf  = p.superflexValues || p.values || {};
         const qb1 = p.oneQBValues     || {};
+        const sfVal  = sf.value  || p.value || 0;
+        const qb1Val = qb1.value || p.oneqbValue || 0;
         return {
           id:       String(p.playerID || p.slug || p.playerName),
           name:     p.playerName,
           position: p.position || '',
           team:     p.team || '',
           // Redraft SF values (with TEP variants)
-          sf:       sf.value   || p.value || 0,
-          tep:      sf.tep   && sf.tep.value   || sf.value || p.value || 0,
-          tepp:     sf.tepp  && sf.tepp.value  || sf.value || p.value || 0,
-          teppp:    sf.teppp && sf.teppp.value || sf.value || p.value || 0,
+          sf:       sfVal,
+          tep:      tepVal(sf.tep,   sfVal),
+          tepp:     tepVal(sf.tepp,  sfVal),
+          teppp:    tepVal(sf.teppp, sfVal),
           // Redraft 1QB values (with TEP variants)
-          oneqb:      qb1.value   || p.oneqbValue || 0,
-          tep_1qb:    qb1.tep   && qb1.tep.value   || qb1.value || p.oneqbValue || 0,
-          tepp_1qb:   qb1.tepp  && qb1.tepp.value  || qb1.value || p.oneqbValue || 0,
-          teppp_1qb:  qb1.teppp && qb1.teppp.value || qb1.value || p.oneqbValue || 0,
+          oneqb:      qb1Val,
+          tep_1qb:    tepVal(qb1.tep,   qb1Val),
+          tepp_1qb:   tepVal(qb1.tepp,  qb1Val),
+          teppp_1qb:  tepVal(qb1.teppp, qb1Val),
         };
       }).filter(p => {
         if (!p.name || (p.sf <= 0 && p.oneqb <= 0)) return false;
@@ -796,6 +811,13 @@ async function backfillKTCHistory() {
         if (!player) continue;
 
         const hists = parseAllHistories(entry);
+
+        // Debug: log first TE player's TEP data to verify parsing
+        if (bNum === 1 && player.position === 'TE' && hists.tep.length > 0) {
+          console.log(`  TEP DEBUG: ${player.name} — sf:${hists.sf.length} tep:${hists.tep.length} oneqb:${hists.oneqb.length} tep_1qb:${hists.tep_1qb.length}`);
+          if (hists.sf.length) console.log(`    SF sample: ${hists.sf[0].dateStr} = ${hists.sf[0].value}`);
+          if (hists.tep.length) console.log(`    TEP sample: ${hists.tep[0].dateStr} = ${hists.tep[0].value}`);
+        }
         // Build date maps for O(1) lookup
         const maps = {};
         for (const [key, arr] of Object.entries(hists)) {
