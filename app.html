@@ -4470,6 +4470,10 @@ async function init() {
   loadLeagueOverrides();
   try { await loadPlayers(); } catch(e) {}
   try { await loadRedraftPlayers(); } catch(e) {}
+  try { await loadKtcHistory(); } catch(e) {}
+  try { await loadKtcRedraftHistory(); } catch(e) {}
+  try { await loadPlayerStats(); } catch(e) {}
+  try { await loadTeamHistory(); } catch(e) {}
   await lLoadAllLeagues();
   renderConfigOverrides();
   renderValueSourceSelector();
@@ -4477,10 +4481,12 @@ async function init() {
   syncConfigInputs();
   const hasKTC = allPlayers.length > 0;
   const hasLeagues = L_LEAGUES.some(l => leagueData[l.id]);
+  const hasHist = Object.keys(ktcHistory).length > 0;
   if (hasKTC || hasLeagues) {
     const parts = [];
     if (hasKTC) parts.push(allPlayers.length + ' players');
     if (hasLeagues) parts.push(L_LEAGUES.filter(l => leagueData[l.id]).length + '/' + L_LEAGUES.length + ' leagues');
+    if (hasHist) parts.push(Object.keys(ktcHistory).length + ' days history');
     setSyncBannerStatus(parts.join(' · '), 'ok');
   } else {
     setSyncBannerStatus('No data — tap SYNC ALL to fetch', '');
@@ -4499,8 +4505,8 @@ const TEAM_HIST_LS_KEY = 'dynastyCalc_teamHistory_v1';
 
 async function loadTeamHistory() {
   try {
-    const raw = localStorage.getItem('dynastyCalc_teamHistory_v1');
-    if (raw) { teamHistory = JSON.parse(raw); teamHistoryLoaded = true; }
+    const data = await dbGet('teamHistory');
+    if (data) { teamHistory = data; teamHistoryLoaded = true; }
   } catch(e) {}
 }
 let playerStats = {};
@@ -4514,22 +4520,22 @@ const PLAYER_STATS_LS_KEY = 'dynastyCalc_playerStats_v1';
 
 async function loadKtcHistory() {
   try {
-    const raw = localStorage.getItem('dynastyCalc_ktcHistory_v1');
-    if (raw) { ktcHistory = JSON.parse(raw); historyLoaded = true; }
+    const data = await dbGet('ktcHistory');
+    if (data) { ktcHistory = data; historyLoaded = true; }
   } catch(e) {}
 }
 
 async function loadKtcRedraftHistory() {
   try {
-    const raw = localStorage.getItem('dynastyCalc_ktcRedraftHistory_v1');
-    if (raw) { ktcRedraftHistory = JSON.parse(raw); redraftHistoryLoaded = true; }
+    const data = await dbGet('ktcRedraftHistory');
+    if (data) { ktcRedraftHistory = data; redraftHistoryLoaded = true; }
   } catch(e) {}
 }
 
 async function loadPlayerStats() {
   try {
-    const raw = localStorage.getItem('dynastyCalc_playerStats_v1');
-    if (raw) { playerStats = JSON.parse(raw); statsLoaded = true; }
+    const data = await dbGet('playerStats');
+    if (data) { playerStats = data; statsLoaded = true; }
   } catch(e) {}
 }
 
@@ -5595,6 +5601,57 @@ renderRankingsRedraftView = function() {
   );
 };
 
+// ── IndexedDB helper — persistent offline storage ────────────────────────────
+// Used for large data (history, stats) that exceeds localStorage's 5MB limit.
+// IndexedDB on iOS Safari gives PWAs ~500MB+.
+const IDB_NAME = 'DynastyTools';
+const IDB_VERSION = 1;
+const IDB_STORE = 'data';
+
+function _idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbGet(key) {
+  const db = await _idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbSet(key, value) {
+  const db = await _idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const req = tx.objectStore(IDB_STORE).put(value, key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbDel(key) {
+  const db = await _idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const req = tx.objectStore(IDB_STORE).delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
 // ── App-specific additions ────────────────────────────────────────────────────
 
 // setSyncBannerStatus / setSyncBannerAge are no-ops in app.html (no sync bar)
@@ -5758,8 +5815,7 @@ async function syncAll() {
     if (rh.ok) {
       const hist = await rh.json();
       ktcHistory = hist; historyLoaded = true;
-      try { localStorage.setItem('dynastyCalc_ktcHistory_v1', JSON.stringify(hist)); }
-      catch(lse) { console.warn('History too large for localStorage:', lse.message); }
+      await dbSet('ktcHistory', hist);
       steps.push('History ✓');
     } else { steps.push('History ✗'); }
   } catch(e) { steps.push('History ✗ ' + e.message); }
@@ -5769,8 +5825,7 @@ async function syncAll() {
     if (rrh.ok) {
       const rdHist = await rrh.json();
       ktcRedraftHistory = rdHist; redraftHistoryLoaded = true;
-      try { localStorage.setItem('dynastyCalc_ktcRedraftHistory_v1', JSON.stringify(rdHist)); }
-      catch(lse) { console.warn('Redraft history too large for localStorage:', lse.message); }
+      await dbSet('ktcRedraftHistory', rdHist);
       steps.push('RD Hist ✓');
     } else { steps.push('RD Hist ✗'); }
   } catch(e) { steps.push('RD Hist ✗ ' + e.message); }
@@ -5779,7 +5834,7 @@ async function syncAll() {
     const rp = await fetch(PROXY + '/player-stats', { signal: AbortSignal.timeout(30000) });
     if (rp.ok) {
       const stats = await rp.json();
-      localStorage.setItem('dynastyCalc_playerStats_v1', JSON.stringify(stats));
+      await dbSet('playerStats', stats);
       playerStats = stats; statsLoaded = true;
       steps.push('Stats ✓');
     } else { steps.push('Stats ✗'); }
@@ -5789,7 +5844,7 @@ async function syncAll() {
     const rt = await fetch(PROXY + '/team-history', { signal: AbortSignal.timeout(15000) });
     if (rt.ok) {
       const th = await rt.json();
-      localStorage.setItem('dynastyCalc_teamHistory_v1', JSON.stringify(th));
+      await dbSet('teamHistory', th);
       teamHistory = th; teamHistoryLoaded = true;
       steps.push('Teams ✓');
     } else { steps.push('Teams ✗'); }
