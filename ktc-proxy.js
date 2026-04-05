@@ -395,14 +395,14 @@ async function scrapeKTC() {
           calculated: p.calculated || false,
           // Superflex values
           value:    sf.value   || 0,
-          tep:      sf.tep   && sf.tep.value   || sf.value || 0,
-          tepp:     sf.tepp  && sf.tepp.value  || sf.value || 0,
-          teppp:    sf.teppp && sf.teppp.value || sf.value || 0,
+          tep:      (sf.tep   && sf.tep.value)   || (sf.tep   && typeof sf.tep === 'number' ? sf.tep : 0) || sf.value || 0,
+          tepp:     (sf.tepp  && sf.tepp.value)  || (sf.tepp  && typeof sf.tepp === 'number' ? sf.tepp : 0) || sf.value || 0,
+          teppp:    (sf.teppp && sf.teppp.value) || (sf.teppp && typeof sf.teppp === 'number' ? sf.teppp : 0) || sf.value || 0,
           // 1QB values
           oneqb:        qb1.value   || 0,
-          tep_1qb:      qb1.tep   && qb1.tep.value   || qb1.value || 0,
-          tepp_1qb:     qb1.tepp  && qb1.tepp.value  || qb1.value || 0,
-          teppp_1qb:    qb1.teppp && qb1.teppp.value || qb1.value || 0,
+          tep_1qb:      (qb1.tep   && qb1.tep.value)   || (qb1.tep   && typeof qb1.tep === 'number' ? qb1.tep : 0) || qb1.value || 0,
+          tepp_1qb:     (qb1.tepp  && qb1.tepp.value)  || (qb1.tepp  && typeof qb1.tepp === 'number' ? qb1.tepp : 0) || qb1.value || 0,
+          teppp_1qb:    (qb1.teppp && qb1.teppp.value) || (qb1.teppp && typeof qb1.teppp === 'number' ? qb1.teppp : 0) || qb1.value || 0,
         };
       }).filter(p => {
         if ((!p.value && !p.oneqb) || !p.name) return false;
@@ -727,23 +727,31 @@ function ktcHistoriesPost(playerIDs) {
 }
 
 function parseAllHistories(entry) {
-  const sf  = entry.superflexValues || {};
-  const qb1 = entry.oneQB           || {};
+  // Actual KTC API shape (discovered 2026-04):
+  //   entry.superflex.valueHistory    — SF dynasty
+  //   entry.superflex.tepHistory      — SF TEP (0.5)
+  //   entry.superflex.teppHistory     — SF TEP++ (1.0)
+  //   entry.superflex.tepppHistory    — SF TEP+++ (2.0)
+  //   entry.oneQB.valueHistory        — 1QB dynasty
+  //   entry.oneQB.tepHistory          — 1QB TEP
+  //   entry.oneQB.teppHistory         — 1QB TEP++
+  //   entry.oneQB.tepppHistory        — 1QB TEP+++
+  // Also handle legacy key names (superflexValues) as fallback
+  const sf  = entry.superflex || entry.superflexValues || {};
+  const qb1 = entry.oneQB || {};
   function decodeList(arr) {
     if (!Array.isArray(arr)) return [];
     return arr.map(decodeKTCHistoryEntry).filter(Boolean);
   }
-  // KTC nests TEP variants as sf.tep.valueHistory, sf.tepp.valueHistory, etc.
-  // Also try alternate key names in case API shape differs
   return {
     sf:        decodeList(sf.valueHistory),
-    tep:       decodeList((sf.tep   || sf.tepValues   || {}).valueHistory),
-    tepp:      decodeList((sf.tepp  || sf.teppValues  || {}).valueHistory),
-    teppp:     decodeList((sf.teppp || sf.tepppValues || {}).valueHistory),
+    tep:       decodeList(sf.tepHistory    || (sf.tep   || {}).valueHistory),
+    tepp:      decodeList(sf.teppHistory   || (sf.tepp  || {}).valueHistory),
+    teppp:     decodeList(sf.tepppHistory  || (sf.teppp || {}).valueHistory),
     oneqb:     decodeList(qb1.valueHistory),
-    tep_1qb:   decodeList((qb1.tep   || qb1.tepValues   || {}).valueHistory),
-    tepp_1qb:  decodeList((qb1.tepp  || qb1.teppValues  || {}).valueHistory),
-    teppp_1qb: decodeList((qb1.teppp || qb1.tepppValues || {}).valueHistory),
+    tep_1qb:   decodeList(qb1.tepHistory   || (qb1.tep   || {}).valueHistory),
+    tepp_1qb:  decodeList(qb1.teppHistory  || (qb1.tepp  || {}).valueHistory),
+    teppp_1qb: decodeList(qb1.tepppHistory || (qb1.teppp || {}).valueHistory),
   };
 }
 
@@ -798,6 +806,8 @@ async function backfillKTCHistory() {
         const allDates = new Set([
           ...hists.sf.map(e => e.dateStr),
           ...hists.oneqb.map(e => e.dateStr),
+          ...hists.tep.map(e => e.dateStr),
+          ...hists.tep_1qb.map(e => e.dateStr),
         ]);
 
         for (const ds of allDates) {

@@ -5013,23 +5013,32 @@ function buildPCScoringSection(name) {
     if (tepBonus > 0 && s.avgRec != null) v += tepBonus * s.avgRec;
     return v;
   });
+  const games = years.map(yr => ps.seasons[yr]?.games || 0);
   const maxPPG = Math.max(...ppgs, 0.1);
-  const bw=36, gap=8, bh=60, bpB=18, bpT=6;
-  const totalW = years.length*(bw+gap)-gap+32;
+  const bw=42, gap=10, bh=80, bpB=20, bpT=16;
+  const totalW = years.length*(bw+gap)-gap+40;
+  // Gridlines for yearly chart
+  const yGridlines = [0, 10, 20, 30].filter(v => v <= maxPPG * 1.1).map(v => {
+    const gy = bpT + (bh-bpB-bpT) - (v/maxPPG)*(bh-bpB-bpT);
+    return `<line x1="10" y1="${gy.toFixed(1)}" x2="${totalW-4}" y2="${gy.toFixed(1)}" stroke="var(--border)" stroke-width="0.5" opacity="0.4"/>
+      <text x="8" y="${gy.toFixed(1)}" text-anchor="end" dominant-baseline="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace" opacity="0.5">${v}</text>`;
+  }).join('');
   const bars = years.map((yr,i) => {
     const v = ppgs[i];
+    const g = games[i];
     const barH = Math.max(0, (v/maxPPG)*(bh-bpB-bpT));
-    const x = 16 + i*(bw+gap);
+    const x = 20 + i*(bw+gap);
     const y = bpT + (bh-bpB-bpT) - barH;
     const isSel = yr === pcHistorySeason;
     const col = isSel ? 'var(--accent4)' : 'var(--border2)';
     return `<g onclick="pcSelectSeason(${yr})" style="cursor:pointer">
-      <rect x="${x}" y="${y.toFixed(1)}" width="${bw}" height="${barH.toFixed(1)}" rx="3" fill="${col}" opacity="${isSel?1:0.55}"/>
-      <text x="${x+bw/2}" y="${(y-3).toFixed(1)}" text-anchor="middle" fill="${col}" font-size="9" font-family="DM Mono,monospace">${v.toFixed(1)}</text>
-      <text x="${x+bw/2}" y="${bh}" text-anchor="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">${yr}</text>
+      <rect x="${x}" y="${y.toFixed(1)}" width="${bw}" height="${barH.toFixed(1)}" rx="4" fill="${col}" opacity="${isSel?1:0.5}"/>
+      <text x="${x+bw/2}" y="${(y-4).toFixed(1)}" text-anchor="middle" fill="${isSel?'var(--text)':'var(--muted)'}" font-size="11" font-weight="${isSel?'600':'400'}" font-family="DM Mono,monospace">${v.toFixed(1)}</text>
+      <text x="${x+bw/2}" y="${bh-4}" text-anchor="middle" fill="${isSel?'var(--accent4)':'var(--muted)'}" font-size="10" font-weight="${isSel?'600':'400'}" font-family="DM Mono,monospace">${yr}</text>
+      <text x="${x+bw/2}" y="${bh+7}" text-anchor="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace" opacity="0.6">${g}gm</text>
     </g>`;
   }).join('');
-  const ppgChart = `<svg width="100%" viewBox="0 0 ${totalW} ${bh}" preserveAspectRatio="xMinYMid meet" style="display:block;overflow:visible;margin-bottom:10px">${bars}</svg>`;
+  const ppgChart = `<svg width="100%" viewBox="0 0 ${totalW} ${bh+10}" preserveAspectRatio="xMinYMid meet" style="display:block;overflow:visible;margin-bottom:8px">${yGridlines}${bars}</svg>`;
 
   // Weekly bars (TEP-adjusted if byWeekRec available)
   let weeklyChart = '';
@@ -5044,30 +5053,45 @@ function buildPCScoringSection(name) {
     const maxW = Math.max(...wVals, 0.1);
     const nonZero = wVals.filter(v => v > 0);
     const avg = nonZero.length ? nonZero.reduce((a,b)=>a+b,0)/nonZero.length : 0;
-    const cW=560,cH=90,pL=24,pR=8,pT=14,pB=16;
+    const cW=580,cH=130,pL=6,pR=6,pT=18,pB=20;
     const iW2=cW-pL-pR, iH2=cH-pT-pB;
-    const bw2 = Math.max(3, iW2/weeks.length - 2);
+    const barSpacing = iW2 / weeks.length;
+    const bw2 = Math.max(6, barSpacing * 0.7);
     const avgY = pT + iH2 - (avg/maxW)*iH2;
+    // Horizontal gridlines
+    const wGridlines = [0, 10, 20, 30].filter(v => v <= maxW * 1.05).map(v => {
+      const gy = pT + iH2 - (v/maxW)*iH2;
+      return `<line x1="${pL}" y1="${gy.toFixed(1)}" x2="${pL+iW2}" y2="${gy.toFixed(1)}" stroke="var(--border)" stroke-width="0.5" opacity="0.3"/>`;
+    }).join('');
     const wBars = wVals.map((v,i) => {
-      const x = pL + (i/(Math.max(weeks.length-1,1)))*iW2;
+      const x = pL + barSpacing * i + barSpacing/2;
       const barH2 = (v/maxW)*iH2;
       const y2 = pT+iH2-barH2;
       const col = v===0?'var(--border2)':v>=20?'var(--accent)':v>=10?'var(--accent4)':'var(--accent2)';
-      const valLabel = v > 0 ? `<text x="${x.toFixed(1)}" y="${(y2-2).toFixed(1)}" text-anchor="middle" fill="${col}" font-size="7" font-family="DM Mono,monospace" opacity="0.9">${v.toFixed(1)}</text>` : '';
-      return `<rect x="${(x-bw2/2).toFixed(1)}" y="${y2.toFixed(1)}" width="${bw2.toFixed(1)}" height="${Math.max(0,barH2).toFixed(1)}" rx="1.5" fill="${col}" opacity="0.85"/>${valLabel}`;
+      const valLabel = v > 0 ? `<text x="${x.toFixed(1)}" y="${(y2-4).toFixed(1)}" text-anchor="middle" fill="${col}" font-size="10" font-weight="500" font-family="DM Mono,monospace">${v.toFixed(1)}</text>` : '';
+      return `<rect x="${(x-bw2/2).toFixed(1)}" y="${y2.toFixed(1)}" width="${bw2.toFixed(1)}" height="${Math.max(0,barH2).toFixed(1)}" rx="2" fill="${col}" opacity="0.85"/>${valLabel}`;
     }).join('');
-    const wLabels = weeks.map((w,i) =>
-      `<text x="${(pL+(i/(Math.max(weeks.length-1,1)))*iW2).toFixed(1)}" y="${(pT+iH2+12).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="6" font-family="DM Mono,monospace">${w}</text>`
-    ).join('');
+    const wLabels = weeks.map((w,i) => {
+      const x = pL + barSpacing * i + barSpacing/2;
+      return `<text x="${x.toFixed(1)}" y="${(pT+iH2+14).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">${w}</text>`;
+    }).join('');
     const avgLine = avg > 0
-      ? `<line x1="${pL}" y1="${avgY.toFixed(1)}" x2="${(pL+iW2).toFixed(1)}" y2="${avgY.toFixed(1)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>
-         <text x="${(pL+iW2+2).toFixed(1)}" y="${avgY.toFixed(1)}" dominant-baseline="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace">${avg.toFixed(1)}</text>`
+      ? `<line x1="${pL}" y1="${avgY.toFixed(1)}" x2="${(pL+iW2)}" y2="${avgY.toFixed(1)}" stroke="var(--accent3)" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.7"/>
+         <text x="${(pL+iW2+3).toFixed(1)}" y="${avgY.toFixed(1)}" dominant-baseline="middle" fill="var(--accent3)" font-size="9" font-weight="500" font-family="DM Mono,monospace">${avg.toFixed(1)}</text>`
       : '';
     const tepNote = tepBonus > 0 && Object.keys(byRec).length
-      ? ` <span style="color:var(--TE);font-size:8px">+${tepBonus}/REC TEP</span>` : '';
-    weeklyChart = `<div style="margin-top:4px">
-      <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--muted);letter-spacing:1.5px;margin-bottom:3px">WEEKLY ${pcHistorySeason}${tepNote}</div>
-      <svg width="100%" viewBox="0 0 ${cW} ${cH}" preserveAspectRatio="none" style="display:block;overflow:visible">${wBars}${wLabels}${avgLine}</svg>
+      ? ` <span style="color:var(--TE);font-size:9px">+${tepBonus}/REC TEP</span>` : '';
+    weeklyChart = `<div style="margin-top:10px">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1.5px;margin-bottom:6px;display:flex;align-items:center;gap:8px">
+        <span>WEEKLY ${pcHistorySeason}</span>${tepNote}
+        <span style="display:inline-flex;align-items:center;gap:4px;margin-left:auto">
+          <span style="display:inline-block;width:8px;height:2px;background:var(--accent);border-radius:1px"></span><span style="font-size:7px">20+</span>
+          <span style="display:inline-block;width:8px;height:2px;background:var(--accent4);border-radius:1px"></span><span style="font-size:7px">10+</span>
+          <span style="display:inline-block;width:8px;height:2px;background:var(--accent2);border-radius:1px"></span><span style="font-size:7px">&lt;10</span>
+          <span style="display:inline-block;width:12px;height:0;border-top:1.5px dashed var(--accent3)"></span><span style="font-size:7px">AVG</span>
+        </span>
+      </div>
+      <svg width="100%" viewBox="0 0 ${cW} ${cH}" preserveAspectRatio="none" style="display:block;overflow:visible">${wGridlines}${wBars}${wLabels}${avgLine}</svg>
     </div>`;
   }
 
@@ -5075,14 +5099,32 @@ function buildPCScoringSection(name) {
   let ppgAdj = season.ppg || 0;
   if (tepBonus > 0 && season.avgRec != null) ppgAdj += tepBonus * season.avgRec;
   const tepNote2 = tepBonus > 0 && season.avgRec != null ? ` · ${ppgAdj.toFixed(1)} w/TEP` : '';
-  const gStr = `${season.games} GM · ${season.totalPoints.toFixed(0)} PTS${tepNote2}${season.avgSnapPct>0?' · '+season.avgSnapPct.toFixed(0)+'% SNAP':''}`;
+
+  const summaryCards = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:6px;margin:10px 0">
+    <div style="background:var(--surface3);border-radius:6px;padding:6px 8px;text-align:center">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--accent4)">${ppgAdj.toFixed(1)}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:7px;color:var(--muted);letter-spacing:1px">PPG</div>
+    </div>
+    <div style="background:var(--surface3);border-radius:6px;padding:6px 8px;text-align:center">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--text)">${season.games}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:7px;color:var(--muted);letter-spacing:1px">GAMES</div>
+    </div>
+    <div style="background:var(--surface3);border-radius:6px;padding:6px 8px;text-align:center">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--accent3)">${season.totalPoints.toFixed(0)}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:7px;color:var(--muted);letter-spacing:1px">TOTAL PTS</div>
+    </div>
+    ${season.avgSnapPct > 0 ? `<div style="background:var(--surface3);border-radius:6px;padding:6px 8px;text-align:center">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--text)">${season.avgSnapPct.toFixed(0)}%</div>
+      <div style="font-family:'DM Mono',monospace;font-size:7px;color:var(--muted);letter-spacing:1px">SNAP %</div>
+    </div>` : ''}
+  </div>`;
 
   return `<div class="pc-section" id="pc-scoring-section">
     <div class="pc-section-title">SCORING HISTORY <span style="color:var(--muted);font-size:8px">· ${fmtStr}</span></div>
     <div class="pc-chart-wrap">
       ${ppgChart}
       <div class="pc-season-grid">${pills}</div>
-      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin:6px 0">${pcHistorySeason}: ${gStr}</div>
+      ${summaryCards}
       ${weeklyChart}
     </div>
   </div>`;
