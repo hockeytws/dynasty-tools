@@ -943,9 +943,9 @@ body{
   <!-- Sort + position filter -->
   <div class="prof-sort-row">
     <span class="prof-sort-lbl">SORT</span>
-    <button class="exp-filter-btn active" id="prof-sort-ppg" onclick="setProfSort('ppg')">PPG</button>
-    <button class="exp-filter-btn" id="prof-sort-dynasty" onclick="setProfSort('dynasty')">DYNASTY</button>
+    <button class="exp-filter-btn active" id="prof-sort-dynasty" onclick="setProfSort('dynasty')">DYNASTY</button>
     <button class="exp-filter-btn" id="prof-sort-redraft" onclick="setProfSort('redraft')">REDRAFT</button>
+    <button class="exp-filter-btn" id="prof-sort-ppg" onclick="setProfSort('ppg')">PPG</button>
   </div>
   <div class="prof-filter-row">
     <button class="exp-filter-btn active" id="prof-pos-ALL" onclick="setProfPos('ALL')">ALL</button>
@@ -953,6 +953,7 @@ body{
     <button class="exp-filter-btn" id="prof-pos-RB" onclick="setProfPos('RB')">RB</button>
     <button class="exp-filter-btn" id="prof-pos-WR" onclick="setProfPos('WR')">WR</button>
     <button class="exp-filter-btn" id="prof-pos-TE" onclick="setProfPos('TE')">TE</button>
+    <button class="exp-filter-btn" id="prof-pos-RDP" onclick="setProfPos('RDP')">PICKS</button>
   </div>
 
   <!-- Backfill status banner (shown only when relevant) -->
@@ -4525,13 +4526,13 @@ async function loadPlayerStats() {
 // ════════════════════════════════════════════════════════════════════════════
 // PROFILES TAB
 // ════════════════════════════════════════════════════════════════════════════
-let profSortMode = 'ppg';
+let profSortMode = 'dynasty';
 let profPosFilter = 'ALL';
 let profsReady = false;
 
 function setProfSort(mode) {
   profSortMode = mode;
-  ['ppg','dynasty','redraft'].forEach(m => {
+  ['dynasty','redraft','ppg'].forEach(m => {
     const b = document.getElementById('prof-sort-' + m);
     if (b) b.classList.toggle('active', m === mode);
   });
@@ -4540,7 +4541,7 @@ function setProfSort(mode) {
 
 function setProfPos(pos) {
   profPosFilter = pos;
-  ['ALL','QB','RB','WR','TE'].forEach(p => {
+  ['ALL','QB','RB','WR','TE','RDP'].forEach(p => {
     const b = document.getElementById('prof-pos-' + p);
     if (b) b.classList.toggle('active', p === pos);
   });
@@ -4592,6 +4593,22 @@ function getPPG(name) {
   return (playerStats[name].seasons[yr] || {}).ppg || 0;
 }
 
+function getCareerPPG(name) {
+  const ps = playerStats[name];
+  if (!ps || !ps.seasons) return 0;
+  const years = Object.keys(ps.seasons);
+  if (!years.length) return 0;
+  let totalPts = 0, totalGames = 0;
+  for (const yr of years) {
+    const s = ps.seasons[yr];
+    if (s && s.games > 0 && s.ppg > 0) {
+      totalPts += s.ppg * s.games;
+      totalGames += s.games;
+    }
+  }
+  return totalGames > 0 ? totalPts / totalGames : 0;
+}
+
 function escAttr(s) {
   return String(s).replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/"/g,'&quot;');
 }
@@ -4603,11 +4620,20 @@ function renderProfList() {
     el.innerHTML = `<div class="empty-state">KTC data not loaded.<br>Go to <strong>CONFIG</strong> and refresh KTC values first.</div>`;
     return;
   }
-  let players = allPlayers.filter(p => p.position !== 'RDP');
-  if (profPosFilter !== 'ALL') players = players.filter(p => p.position === profPosFilter);
+
+  // Include picks when ALL or RDP filter is active
+  let players;
+  if (profPosFilter === 'RDP') {
+    players = allPlayers.filter(p => p.position === 'RDP');
+  } else if (profPosFilter === 'ALL') {
+    players = allPlayers.slice(); // include everything, including RDP
+  } else {
+    players = allPlayers.filter(p => p.position === profPosFilter);
+  }
 
   if (profSortMode === 'ppg') {
-    players = players.slice().sort((a,b) => getPPG(b.name) - getPPG(a.name));
+    // Career PPG — picks get 0 so they sort to the bottom
+    players = players.slice().sort((a,b) => getCareerPPG(b.name) - getCareerPPG(a.name));
   } else if (profSortMode === 'dynasty') {
     players = players.slice().sort((a,b) => adjValue(b.value,b) - adjValue(a.value,a));
   } else {
@@ -4618,28 +4644,31 @@ function renderProfList() {
 
   const histDates = Object.keys(ktcHistory).sort();
   const rows = players.map((p,i) => {
+    const isPick = p.position === 'RDP';
     const dynVal = adjValue(p.value, p);
-    const rdVal  = adjRedraftValue(p.name, p.position);
-    const ppg    = getPPG(p.name);
+    const rdVal  = isPick ? 0 : adjRedraftValue(p.name, p.position);
+    const ppg    = isPick ? 0 : getCareerPPG(p.name);
     const posCol = posColor(p.position);
-    const spark  = buildSparklineSVG(p.name, histDates, 60, 48, 22);
+    const spark  = isPick ? '' : buildSparklineSVG(p.name, histDates, 60, 48, 22);
     let sortValStr;
     if (profSortMode === 'ppg')
       sortValStr = ppg > 0 ? `<span style="color:var(--accent4)">${ppg.toFixed(1)}</span>` : `<span style="color:var(--muted)">—</span>`;
     else if (profSortMode === 'dynasty')
-      sortValStr = `<span style="color:var(--accent)">${dynVal > 0 ? fmtV(dynVal) : '—'}</span>`;
+      sortValStr = `<span style="color:${isPick?'var(--RDP)':'var(--accent)'}">${dynVal > 0 ? fmtV(dynVal) : '—'}</span>`;
     else
       sortValStr = `<span style="color:var(--accent3)">${rdVal > 0 ? fmtV(rdVal) : '—'}</span>`;
 
-    return `<div class="prof-row" data-player="${escAttr(p.name)}" onclick="openPlayerCard('${escAttr(p.name)}')">
+    const subText = isPick ? '' : `${p.team||'—'}${p.age?' · Age '+p.age:''}`;
+
+    return `<div class="prof-row" onclick="openPlayerCard('${escAttr(p.name)}')">
       <div class="prof-row-num">${i+1}</div>
-      <div class="prof-row-pos" style="color:${posCol}">${p.position}</div>
+      <div class="prof-row-pos" style="color:${posCol}">${p.position === 'RDP' ? 'PICK' : p.position}</div>
       <div class="prof-row-info">
         <div class="prof-row-name">${p.name}</div>
-        <div class="prof-row-sub">${p.team||'—'}${p.age?' · Age '+p.age:''}</div>
+        ${subText ? `<div class="prof-row-sub">${subText}</div>` : ''}
       </div>
       <div class="prof-row-val">${sortValStr}</div>
-      <div class="prof-row-spark">${spark}</div>
+      ${spark ? `<div class="prof-row-spark">${spark}</div>` : ''}
     </div>`;
   }).join('');
 
@@ -4678,14 +4707,15 @@ function profSearchInput(q) {
   if (!dd) return;
   const trimmed = q.trim().toLowerCase();
   if (trimmed.length < 2 || !allPlayers.length) { dd.style.display = 'none'; return; }
-  const matches = allPlayers.filter(p => p.position !== 'RDP' && p.name.toLowerCase().includes(trimmed)).slice(0,18);
+  const matches = allPlayers.filter(p => p.name.toLowerCase().includes(trimmed)).slice(0,18);
   if (!matches.length) { dd.style.display = 'none'; return; }
   dd.innerHTML = matches.map(p => {
-    const ppg = getPPG(p.name);
+    const isPick = p.position === 'RDP';
+    const ppg = isPick ? 0 : getPPG(p.name);
     const dv  = adjValue(p.value, p);
     const col = posColor(p.position);
     return `<div class="prof-dd-item" onmousedown="event.preventDefault();profSearchSelect('${escAttr(p.name)}')">
-      <div class="prof-dd-pos" style="background:${col}22;color:${col}">${p.position}</div>
+      <div class="prof-dd-pos" style="background:${col}22;color:${col}">${isPick ? 'PICK' : p.position}</div>
       <div class="prof-dd-name">${p.name}</div>
       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);flex:1">${p.team||'—'}</div>
       ${ppg > 0 ? `<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--accent4)">${ppg.toFixed(1)} PPG</div>` : ''}
