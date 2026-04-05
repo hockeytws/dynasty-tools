@@ -388,24 +388,26 @@ async function syncAll() {
 
   setS('Syncing history\u2026');
   try {
-    const rh = await fetch(PROXY + '/ktc-history', { signal: AbortSignal.timeout(30000) });
+    const rh = await fetch(PROXY + '/ktc-history', { signal: AbortSignal.timeout(60000) });
     if (rh.ok) {
       const hist = await rh.json();
-      localStorage.setItem('dynastyCalc_ktcHistory_v1', JSON.stringify(hist));
       ktcHistory = hist; historyLoaded = true;
+      try { localStorage.setItem('dynastyCalc_ktcHistory_v1', JSON.stringify(hist)); }
+      catch(lse) { console.warn('History too large for localStorage:', lse.message); }
       steps.push('History \u2713');
     } else { steps.push('History \u2717'); }
-  } catch(e) { steps.push('History \u2717'); }
+  } catch(e) { steps.push('History \u2717 ' + e.message); }
 
   try {
-    const rrh = await fetch(PROXY + '/ktc-redraft-history', { signal: AbortSignal.timeout(30000) });
+    const rrh = await fetch(PROXY + '/ktc-redraft-history', { signal: AbortSignal.timeout(60000) });
     if (rrh.ok) {
       const rdHist = await rrh.json();
-      localStorage.setItem('dynastyCalc_ktcRedraftHistory_v1', JSON.stringify(rdHist));
       ktcRedraftHistory = rdHist; redraftHistoryLoaded = true;
+      try { localStorage.setItem('dynastyCalc_ktcRedraftHistory_v1', JSON.stringify(rdHist)); }
+      catch(lse) { console.warn('Redraft history too large for localStorage:', lse.message); }
       steps.push('RD Hist \u2713');
     } else { steps.push('RD Hist \u2717'); }
-  } catch(e) { steps.push('RD Hist \u2717'); }
+  } catch(e) { steps.push('RD Hist \u2717 ' + e.message); }
 
   try {
     const rp = await fetch(PROXY + '/player-stats', { signal: AbortSignal.timeout(30000) });

@@ -4994,7 +4994,7 @@ function buildPCValueHistorySection(name) {
   }
 
   // Chart dimensions — taller with room for labels
-  const chartW=580, chartH=160, padL=50, padR=12, padT=12, padB=36;
+  const chartW=580, chartH=150, padL=50, padR=12, padT=12, padB=26;
   const iW=chartW-padL-padR, iH=chartH-padT-padB;
   const vals = pts.map(p => p.v);
   const minV=Math.min(...vals), maxV=Math.max(...vals);
@@ -5032,16 +5032,14 @@ function buildPCValueHistorySection(name) {
     const parts = d.split('-');
     const mon = MONTHS[parseInt(parts[1])-1] || parts[1];
     const day = parseInt(parts[2]);
-    const label = `${mon} ${day}`;
+    const yr = parts[0].slice(2); // "25" or "26"
+    const label = `${mon} ${day} '${yr}`;
     const x = toX(idx);
     xLabels.push(`<line x1="${x.toFixed(1)}" y1="${padT}" x2="${x.toFixed(1)}" y2="${(padT+iH).toFixed(1)}" stroke="var(--border)" stroke-width="0.5" opacity="0.2"/>
       <text x="${x.toFixed(1)}" y="${(padT+iH+14).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">${label}</text>`);
   }
-  // Add year label if dates span multiple years
-  const firstYear = pts[0].d.slice(0,4), lastYear = pts[pts.length-1].d.slice(0,4);
-  const yearLabel = firstYear !== lastYear
-    ? `<text x="${(padL+iW/2).toFixed(1)}" y="${(padT+iH+27).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace" opacity="0.6">${firstYear} — ${lastYear}</text>`
-    : `<text x="${(padL+iW/2).toFixed(1)}" y="${(padT+iH+27).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace" opacity="0.6">${firstYear}</text>`;
+  // Year already included in date labels
+  const yearLabel = '';
 
   // Current value + change badges
   const curVal = vals[vals.length-1];
@@ -5170,7 +5168,7 @@ function pcChartShowAtIndex(id, idx) {
     const sign = diff >= 0 ? '+' : '';
     const col = diff >= 0 ? 'var(--accent)' : 'var(--accent2)';
     changeEl.style.color = col;
-    changeEl.textContent = `${sign}${Math.abs(diff).toLocaleString()} (${sign}${pct}%) since ${mon} ${parseInt(parts[2])}`;
+    changeEl.textContent = `${sign}${Math.abs(diff).toLocaleString()} (${sign}${pct}%) since ${mon} ${parseInt(parts[2])}, ${parts[0]}`;
   }
 
   const pctX = x / cfg.chartW * 100;
@@ -5486,7 +5484,8 @@ function renderTCModal(leagueId, teamSlug) {
     const gid=`tcg_${label.replace(/\W/g,'_')}`;
     const yTicks=[minV,maxV].map(v=>`<text x="${padL-4}" y="${toY(v).toFixed(1)}" text-anchor="end" dominant-baseline="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">${(v/1000).toFixed(1)}k</text>`).join('');
     const xIdxs=[0,Math.floor(pts.length/2),pts.length-1];
-    const xLabels=xIdxs.map(i=>`<text x="${toX(i).toFixed(1)}" y="${(padT+iH+13).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace">${pts[i].d.slice(5)}</text>`).join('');
+    const _MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const xLabels=xIdxs.map(i=>{const p=pts[i].d.split('-');return `<text x="${toX(i).toFixed(1)}" y="${(padT+iH+13).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace">${_MO[parseInt(p[1])-1]} ${parseInt(p[2])} '${p[0].slice(2)}</text>`;}).join('');
     return `<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--muted);margin-bottom:3px">${label} · ${pts.length} SNAPSHOTS</div>
       <svg width="100%" viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="none" style="display:block;overflow:visible">
         <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
@@ -5523,10 +5522,16 @@ function renderTCModal(leagueId, teamSlug) {
       ${txns.slice().reverse().map(tx => {
         const col = tx.type === 'add' ? 'var(--accent)' : 'var(--accent2)';
         const icon = tx.type === 'add' ? '+' : '−';
+        const _txMo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        let txDateFmt = tx.date || '';
+        if (txDateFmt && txDateFmt.includes('-')) {
+          const dp = txDateFmt.split('-');
+          txDateFmt = `${_txMo[parseInt(dp[1])-1]} ${parseInt(dp[2])}, ${dp[0]}`;
+        }
         return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-family:'DM Mono',monospace;font-size:10px;border-bottom:1px solid var(--border)">
           <span style="color:${col};font-weight:700;width:14px;text-align:center">${icon}</span>
           <span style="flex:1;cursor:pointer" onclick="closeTCModal();openPlayerCard('${esc(tx.player)}','${leagueId}')">${tx.player}</span>
-          <span style="color:var(--muted);font-size:8px">${tx.date || ''}</span>
+          <span style="color:var(--muted);font-size:8px">${txDateFmt}</span>
         </div>`;
       }).join('')}
     </div>` : '';
@@ -5749,24 +5754,26 @@ async function syncAll() {
 
   setS('Syncing history…');
   try {
-    const rh = await fetch(PROXY + '/ktc-history', { signal: AbortSignal.timeout(30000) });
+    const rh = await fetch(PROXY + '/ktc-history', { signal: AbortSignal.timeout(60000) });
     if (rh.ok) {
       const hist = await rh.json();
-      localStorage.setItem('dynastyCalc_ktcHistory_v1', JSON.stringify(hist));
       ktcHistory = hist; historyLoaded = true;
+      try { localStorage.setItem('dynastyCalc_ktcHistory_v1', JSON.stringify(hist)); }
+      catch(lse) { console.warn('History too large for localStorage:', lse.message); }
       steps.push('History ✓');
     } else { steps.push('History ✗'); }
-  } catch(e) { steps.push('History ✗'); }
+  } catch(e) { steps.push('History ✗ ' + e.message); }
 
   try {
-    const rrh = await fetch(PROXY + '/ktc-redraft-history', { signal: AbortSignal.timeout(30000) });
+    const rrh = await fetch(PROXY + '/ktc-redraft-history', { signal: AbortSignal.timeout(60000) });
     if (rrh.ok) {
       const rdHist = await rrh.json();
-      localStorage.setItem('dynastyCalc_ktcRedraftHistory_v1', JSON.stringify(rdHist));
       ktcRedraftHistory = rdHist; redraftHistoryLoaded = true;
+      try { localStorage.setItem('dynastyCalc_ktcRedraftHistory_v1', JSON.stringify(rdHist)); }
+      catch(lse) { console.warn('Redraft history too large for localStorage:', lse.message); }
       steps.push('RD Hist ✓');
     } else { steps.push('RD Hist ✗'); }
-  } catch(e) { steps.push('RD Hist ✗'); }
+  } catch(e) { steps.push('RD Hist ✗ ' + e.message); }
 
   try {
     const rp = await fetch(PROXY + '/player-stats', { signal: AbortSignal.timeout(30000) });
