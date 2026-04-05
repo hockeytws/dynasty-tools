@@ -71,6 +71,14 @@ sw_update_section = '''
         <div style="font-family:\\'DM Mono\\',monospace;font-size:9px;color:var(--muted);margin-top:8px;" id="sw-version-lbl"></div>
       </div>
     </div>
+    <!-- ── OFFLINE DATA STATUS ── -->
+    <div class="config-section">
+      <div class="config-section-title">OFFLINE DATA</div>
+      <div class="config-card wide">
+        <div class="config-hint">Data stored in IndexedDB for offline use. Persists across app restarts.</div>
+        <div style="font-family:\\'DM Mono\\',monospace;font-size:9px;color:var(--muted);margin-top:8px;" id="idb-status-lbl">Checking\\u2026</div>
+      </div>
+    </div>
 '''
 # Inject the APP UPDATE section before the end of .config-page
 # The closing sequence after LEAGUE SETTINGS is: \n    </div>\n</div>\n  </div>
@@ -226,7 +234,8 @@ js = replace_fn_body(js, 'async function init()',
   } else {
     setSyncBannerStatus('No data \u2014 tap SYNC ALL to fetch', '');
   }
-  setSyncBannerAge();''')
+  setSyncBannerAge();
+  updateIDBStatus();''')
 
 # 9. Append app-specific additions
 js = js.rstrip()
@@ -291,6 +300,20 @@ async function dbDel(key) {
 // setSyncBannerStatus / setSyncBannerAge are no-ops in app.html (no sync bar)
 function setSyncBannerStatus(msg, cls) {}
 function setSyncBannerAge() {}
+
+function updateIDBStatus() {
+  const el = document.getElementById('idb-status-lbl');
+  if (!el) return;
+  const parts = [];
+  parts.push('KTC: ' + (allPlayers.length || 0) + ' players');
+  const histDays = Object.keys(ktcHistory).length;
+  parts.push('Dynasty hist: ' + (histDays > 0 ? histDays + ' days' : 'none'));
+  const rdHistDays = Object.keys(ktcRedraftHistory).length;
+  parts.push('Redraft hist: ' + (rdHistDays > 0 ? rdHistDays + ' days' : 'none'));
+  parts.push('Stats: ' + (Object.keys(playerStats).length || 0) + ' players');
+  parts.push('Teams: ' + (Object.keys(teamHistory).length || 0) + ' leagues');
+  el.textContent = parts.join(' \\u00b7 ');
+}
 
 async function swCheckUpdate() {
   const btn    = document.getElementById('sw-update-btn');
@@ -491,6 +514,7 @@ async function syncAll() {
   setSyncBannerAge();
   renderConfigOverrides();
   lUpdateCfgSyncStatus();
+  updateIDBStatus();
 }
 '''
 
