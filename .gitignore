@@ -12,6 +12,7 @@ dynasty-cert.mobileconfig
 ktc-cache.json
 ktc-redraft-cache.json
 ktc-history.json
+ktc-redraft-history.json
 ktc-post-filtered.txt
 ffpc-cache.json
 ffpc-player-map.json

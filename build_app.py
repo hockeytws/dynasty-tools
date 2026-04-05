@@ -202,7 +202,7 @@ js = replace_fn_body(js, 'async function loadKtcRedraftHistory()',
 js = replace_fn_body(js, 'async function loadPlayerStats()',
     '''  try {
     const data = await dbGet('playerStats');
-    if (data) { playerStats = data; statsLoaded = true; }
+    if (data) { playerStats = data; invalidatePSNormMap(); statsLoaded = true; }
   } catch(e) {}''')
 
 # 6. buildCalcUI — always render immediately; no spinner loop (empty allPlayers = search just returns nothing)
@@ -492,7 +492,7 @@ async function syncAll() {
     if (rp.ok) {
       const stats = await rp.json();
       await dbSet('playerStats', stats);
-      playerStats = stats; statsLoaded = true;
+      playerStats = stats; invalidatePSNormMap(); statsLoaded = true;
       steps.push('Stats \u2713');
     } else { steps.push('Stats \u2717'); }
   } catch(e) { steps.push('Stats \u2717'); }

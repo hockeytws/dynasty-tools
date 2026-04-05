@@ -4544,7 +4544,7 @@ async function loadKtcRedraftHistory() {
 async function loadPlayerStats() {
   try {
     const data = await dbGet('playerStats');
-    if (data) { playerStats = data; statsLoaded = true; }
+    if (data) { playerStats = data; invalidatePSNormMap(); statsLoaded = true; }
   } catch(e) {}
 }
 
@@ -4606,8 +4606,35 @@ function hideBannerIfEnough() {
   else banner.style.display = 'none';
 }
 
+// Resolve a player name to their playerStats entry.
+// Tries exact match first, then normalized fallback (handles suffix mismatches like "III").
+let _psNormMap = null;
+function getPlayerStats(name) {
+  if (!name || !playerStats) return null;
+  if (playerStats[name]) return playerStats[name];
+  // Build normalized lookup map once
+  if (!_psNormMap) {
+    _psNormMap = {};
+    for (const k of Object.keys(playerStats)) {
+      const norm = normalizeName(k);
+      if (!_psNormMap[norm]) _psNormMap[norm] = playerStats[k];
+    }
+  }
+  const norm = normalizeName(name);
+  const alias = PLAYER_ALIASES[norm] || norm;
+  return _psNormMap[alias] || null;
+}
+function invalidatePSNormMap() { _psNormMap = null; }
+
+// Resolve name for ktcHistory / ktcRedraftHistory lookup.
+// History is keyed by KTC canonical name — resolve via getKTCPlayer.
+function resolveHistoryName(name) {
+  const ktcp = getKTCPlayer(name);
+  return ktcp ? ktcp.name : name;
+}
+
 function latestStatSeason(name) {
-  const ps = playerStats[name];
+  const ps = getPlayerStats(name);
   if (!ps || !ps.seasons) return null;
   const years = Object.keys(ps.seasons).map(Number).sort((a,b) => b-a);
   return years[0] || null;
@@ -4616,11 +4643,12 @@ function latestStatSeason(name) {
 function getPPG(name) {
   const yr = latestStatSeason(name);
   if (!yr) return 0;
-  return (playerStats[name].seasons[yr] || {}).ppg || 0;
+  const ps = getPlayerStats(name);
+  return (ps?.seasons[yr] || {}).ppg || 0;
 }
 
 function getCareerPPG(name) {
-  const ps = playerStats[name];
+  const ps = getPlayerStats(name);
   if (!ps || !ps.seasons) return 0;
   const years = Object.keys(ps.seasons);
   if (!years.length) return 0;
@@ -4868,7 +4896,7 @@ function pcSetHistoryFormat(fmt) {
 
 function buildPlayerCardHTML(name) {
   const ktcp   = getKTCPlayer(name) || allPlayers.find(p => p.name === name);
-  const ps     = playerStats[name];
+  const ps     = getPlayerStats(name);
   const pos    = ktcp?.position || ps?.pos || '—';
   const team   = ktcp?.team || '—';
   const age    = ktcp?.age || null;
@@ -4969,13 +4997,14 @@ function buildPCValueHistorySection(name) {
   // Build chart points for selected field, applying adjustment
   const histSource = isDyn ? ktcHistory : ktcRedraftHistory;
   const histDates = Object.keys(histSource).sort();
+  const hName = resolveHistoryName(name);
   const pts = [];
   const fallbackField = (field === 'value') ? 'tep' : (field === 'oneqb') ? 'tep_1qb' : null;
   for (const d of histDates) {
     const snap = histSource[d];
-    if (!snap || !snap[name]) continue;
-    let raw = snap[name][field] || 0;
-    if (raw <= 0 && fallbackField) raw = snap[name][fallbackField] || 0;
+    if (!snap || !snap[hName]) continue;
+    let raw = snap[hName][field] || 0;
+    if (raw <= 0 && fallbackField) raw = snap[hName][fallbackField] || 0;
     if (raw <= 0) continue;
     const v = adjFn(raw);
     if (v <= 0) continue;
@@ -5224,7 +5253,7 @@ function pcChartDragEnd(id) {
 }
 
 function buildPCScoringSection(name) {
-  const ps   = playerStats[name];
+  const ps   = getPlayerStats(name);
   const ktcp = getKTCPlayer(name) || allPlayers.find(p => p.name === name);
   const pos  = ktcp?.position || ps?.pos || '';
 
@@ -5858,7 +5887,7 @@ async function syncAll() {
     if (rp.ok) {
       const stats = await rp.json();
       await dbSet('playerStats', stats);
-      playerStats = stats; statsLoaded = true;
+      playerStats = stats; invalidatePSNormMap(); statsLoaded = true;
       steps.push('Stats ✓');
     } else { steps.push('Stats ✗'); }
   } catch(e) { steps.push('Stats ✗'); }
