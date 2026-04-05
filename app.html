@@ -528,6 +528,30 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 .pc-season-pill.active{border-color:var(--accent4);color:var(--accent4);background:rgba(0,191,255,0.08);}
 
 /* ── PROFILES TAB ── */
+
+/* ── TEAM CARD MODAL ── */
+.tc-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:510;display:flex;align-items:flex-end;justify-content:center;animation:fadeIn 0.15s ease;}
+@media(min-width:600px){.tc-overlay{align-items:center;}}
+.tc-modal{background:var(--surface);border:1px solid var(--border2);border-radius:16px 16px 0 0;width:100%;max-width:640px;max-height:88vh;overflow-y:auto;padding-bottom:env(safe-area-inset-bottom,0px);animation:slideUp 0.22s cubic-bezier(0.34,1.56,0.64,1);}
+@media(min-width:600px){.tc-modal{border-radius:16px;max-height:85vh;}}
+.tc-header{display:flex;align-items:flex-start;justify-content:space-between;padding:16px 16px 10px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:2;}
+.tc-title{font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:2px;line-height:1;}
+.tc-body{padding:12px 16px;}
+.tc-stat-row{display:flex;gap:0;background:var(--surface2);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px;}
+.tc-stat{flex:1;padding:9px 10px;text-align:center;border-right:1px solid var(--border);}
+.tc-stat:last-child{border-right:none;}
+.tc-stat-val{font-family:'Bebas Neue',sans-serif;font-size:22px;line-height:1;}
+.tc-stat-lbl{font-family:'DM Mono',monospace;font-size:8px;color:var(--muted);letter-spacing:1.5px;margin-top:2px;}
+.tc-chart-wrap{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;overflow:hidden;margin-bottom:12px;}
+.tc-no-data{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:center;padding:16px 0;}
+
+/* ── PPILL TRADE BUTTON ── */
+.ppill-trade-btn{background:none;border:1px solid var(--border);border-radius:4px;color:var(--muted);font-family:'DM Mono',monospace;font-size:10px;padding:1px 5px;cursor:pointer;transition:all 0.15s;line-height:1.2;flex-shrink:0;margin-left:auto;}
+.ppill-trade-btn:hover{border-color:var(--accent);color:var(--accent);}
+.ppill-trade-btn.state-a{border-color:var(--accent2);color:var(--accent2);}
+.ppill-trade-btn.state-b{border-color:var(--accent4);color:var(--accent4);}
+
+/* ── PROFILES TAB ── */
 .prof-search-wrap{position:relative;margin-bottom:14px;}
 .prof-search-input{width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:11px 14px 11px 36px;font-family:'DM Mono',monospace;font-size:13px;outline:none;transition:border-color 0.15s;}
 .prof-search-input:focus{border-color:var(--accent4);}
@@ -2360,9 +2384,9 @@ function renderRedraftRosterBody(team) {
     const pills = players.map(p => {
       const val = adjRedraftValue(p.name, pos, 'tep');
       const raw = getRawRedraftValue(p.name, pos, 'tep');
-      return `<div class="ppill">
+      return `<div class="ppill" onclick="openPlayerCard('${esc(p.name)}',currentLeague)">
         <span class="dot" style="background:${posColor(pos)}"></span>
-        <span class="ppill-name" data-player="${p.name}">${p.name}</span>
+        <span class="ppill-name">${p.name}</span>
         <span class="ppill-team">${p.nflTeam||''}</span>
         <span class="ppill-val ${val>0?'has-val':''}" style="${val>0?'color:var(--accent3)':''}">
           ${val>0?fmtV(val):'—'}${raw>0?`<span class="raw-ktc">${raw.toLocaleString()}</span>`:''}
@@ -2434,11 +2458,12 @@ function renderRosterBody(team) {
       const key = `${p.name}||${pos}||${team.name}`;
       const state = lClickState[key];
       return `<div class="ppill ${state?'state-'+state:''}"
-        onclick="lHandlePlayerClick('${esc(p.name)}','${pos}','${esc(team.name)}',${val})">
+        onclick="openPlayerCard('${esc(p.name)}',currentLeague)">
         <span class="dot" style="background:${posColor(pos)}"></span>
-        <span class="ppill-name" onclick="event.stopPropagation();openPlayerCard('${esc(p.name)}',currentLeague)" style="cursor:pointer">${p.name}</span>
+        <span class="ppill-name">${p.name}</span>
         <span class="ppill-team">${p.nflTeam}</span>
         <span class="ppill-val ${val>0?'has-val':''}">${fmtV(val)}${rawKtcSpan(p.name,pos)}</span>
+        <button class="ppill-trade-btn ${state?'state-'+state:''}" onclick="event.stopPropagation();lHandlePlayerClick('${esc(p.name)}','${pos}','${esc(team.name)}',${val})" title="Add/move in trade builder">±</button>
       </div>`;
     }).join('');
     return `<div class="pos-group"><div class="pos-group-label" style="color:${posColor(pos)}">${pos}</div><div class="player-pills">${pills}</div></div>`;
@@ -5019,7 +5044,7 @@ function buildPCScoringSection(name) {
     const maxW = Math.max(...wVals, 0.1);
     const nonZero = wVals.filter(v => v > 0);
     const avg = nonZero.length ? nonZero.reduce((a,b)=>a+b,0)/nonZero.length : 0;
-    const cW=560,cH=70,pL=24,pR=8,pT=6,pB=16;
+    const cW=560,cH=90,pL=24,pR=8,pT=14,pB=16;
     const iW2=cW-pL-pR, iH2=cH-pT-pB;
     const bw2 = Math.max(3, iW2/weeks.length - 2);
     const avgY = pT + iH2 - (avg/maxW)*iH2;
@@ -5028,10 +5053,11 @@ function buildPCScoringSection(name) {
       const barH2 = (v/maxW)*iH2;
       const y2 = pT+iH2-barH2;
       const col = v===0?'var(--border2)':v>=20?'var(--accent)':v>=10?'var(--accent4)':'var(--accent2)';
-      return `<rect x="${(x-bw2/2).toFixed(1)}" y="${y2.toFixed(1)}" width="${bw2.toFixed(1)}" height="${Math.max(0,barH2).toFixed(1)}" rx="1.5" fill="${col}" opacity="0.85"/>`;
+      const valLabel = v > 0 ? `<text x="${x.toFixed(1)}" y="${(y2-2).toFixed(1)}" text-anchor="middle" fill="${col}" font-size="7" font-family="DM Mono,monospace" opacity="0.9">${v.toFixed(1)}</text>` : '';
+      return `<rect x="${(x-bw2/2).toFixed(1)}" y="${y2.toFixed(1)}" width="${bw2.toFixed(1)}" height="${Math.max(0,barH2).toFixed(1)}" rx="1.5" fill="${col}" opacity="0.85"/>${valLabel}`;
     }).join('');
-    const wLabels = [0,Math.floor(weeks.length/2),weeks.length-1].filter((v,i,a)=>a.indexOf(v)===i).map(i =>
-      `<text x="${(pL+(i/(Math.max(weeks.length-1,1)))*iW2).toFixed(1)}" y="${(pT+iH2+13).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">Wk ${weeks[i]}</text>`
+    const wLabels = weeks.map((w,i) =>
+      `<text x="${(pL+(i/(Math.max(weeks.length-1,1)))*iW2).toFixed(1)}" y="${(pT+iH2+12).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="6" font-family="DM Mono,monospace">${w}</text>`
     ).join('');
     const avgLine = avg > 0
       ? `<line x1="${pL}" y1="${avgY.toFixed(1)}" x2="${(pL+iW2).toFixed(1)}" y2="${avgY.toFixed(1)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>
