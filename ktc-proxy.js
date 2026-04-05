@@ -208,7 +208,7 @@ function snapshotDate(dateStr, players) {
   if (ktcHistory[dateStr]) return false; // already have it
   const snap = {};
   players.forEach(p => {
-    if (!p.name || p.position === 'RDP') return; // skip picks
+    if (!p.name) return; // skip unnamed
     snap[p.name] = {
       value:     p.value     || 0,
       oneqb:     p.oneqb     || 0,

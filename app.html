@@ -4679,7 +4679,7 @@ function renderProfList() {
 
     const subText = isPick ? '' : `${p.team||'—'}${p.age?' · Age '+p.age:''}`;
 
-    return `<div class="prof-row" onclick="openPlayerCard('${escAttr(p.name)}')">
+    return `<div class="prof-row" onclick="openPlayerCard('${esc(p.name)}')">
       <div class="prof-row-num">${i+1}</div>
       <div class="prof-row-pos" style="color:${posCol}">${p.position === 'RDP' ? 'PICK' : p.position}</div>
       <div class="prof-row-info">
@@ -4733,7 +4733,7 @@ function profSearchInput(q) {
     const ppg = isPick ? 0 : getPPG(p.name);
     const dv  = adjValue(p.value, p);
     const col = posColor(p.position);
-    return `<div class="prof-dd-item" onmousedown="event.preventDefault();profSearchSelect('${escAttr(p.name)}')">
+    return `<div class="prof-dd-item" onmousedown="event.preventDefault();profSearchSelect('${esc(p.name)}')">
       <div class="prof-dd-pos" style="background:${col}22;color:${col}">${isPick ? 'PICK' : p.position}</div>
       <div class="prof-dd-name">${p.name}</div>
       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);flex:1">${p.team||'—'}</div>
@@ -4827,26 +4827,35 @@ function pcOverlayClick(e) {
 
 function pcSelectSeason(yr) {
   pcHistorySeason = Number(yr);
-  const el = document.getElementById('pc-scoring-section');
-  if (el && pcCurrentPlayer) el.outerHTML = buildPCScoringSection(pcCurrentPlayer);
+  if (_pcHistUpdating) return;
+  _pcHistUpdating = true;
+  requestAnimationFrame(() => {
+    const el = document.getElementById('pc-scoring-section');
+    if (el && pcCurrentPlayer) el.outerHTML = buildPCScoringSection(pcCurrentPlayer);
+    _pcHistUpdating = false;
+  });
 }
 
-let _pcHistDebounce = null;
+let _pcHistUpdating = false;
 function pcSetHistoryTab(tab) {
   pcHistoryTab = tab;
-  if (_pcHistDebounce) cancelAnimationFrame(_pcHistDebounce);
-  _pcHistDebounce = requestAnimationFrame(() => {
+  if (_pcHistUpdating) return;
+  _pcHistUpdating = true;
+  requestAnimationFrame(() => {
     const el = document.getElementById('pc-hist-section');
     if (el && pcCurrentPlayer) el.outerHTML = buildPCValueHistorySection(pcCurrentPlayer);
+    _pcHistUpdating = false;
   });
 }
 
 function pcSetHistoryFormat(fmt) {
   pcHistoryFormat = fmt;
-  if (_pcHistDebounce) cancelAnimationFrame(_pcHistDebounce);
-  _pcHistDebounce = requestAnimationFrame(() => {
+  if (_pcHistUpdating) return;
+  _pcHistUpdating = true;
+  requestAnimationFrame(() => {
     const el = document.getElementById('pc-hist-section');
     if (el && pcCurrentPlayer) el.outerHTML = buildPCValueHistorySection(pcCurrentPlayer);
+    _pcHistUpdating = false;
   });
 }
 
@@ -5091,30 +5100,44 @@ function buildPCValueHistorySection(name) {
           ontouchstart="pcChartSlide('${chartId}',this.value)"
           onmouseenter="pcChartShow('${chartId}')"
           onmouseleave="pcChartHide('${chartId}')">
+        <div id="${chartId}_store" style="display:none"
+          data-pts='${JSON.stringify(pts.map(p => ({d:p.d, v:Math.round(p.v), r:p.raw})))}'
+          data-cfg='${JSON.stringify({padL,padR,padT,iW,iH,chartW,chartH,minV:parseFloat(minV.toFixed(1)),range:parseFloat(range.toFixed(1))})}'></div>
       </div>
-      <script>
-        window['${chartId}_data'] = ${JSON.stringify(pts.map(p => ({d:p.d, v:Math.round(p.v), r:p.raw})))};
-        window['${chartId}_cfg'] = {padL:${padL},padR:${padR},padT:${padT},iW:${iW},iH:${iH},chartW:${chartW},chartH:${chartH},minV:${minV.toFixed(1)},range:${range.toFixed(1)}};
-      </script>
     </div>
   </div>`;
 }
 
 // Chart slider interaction
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function pcChartGetData(id) {
+  // Lazy-parse from data attributes and cache on the element
+  const store = document.getElementById(id + '_store');
+  if (!store) return null;
+  if (!store._parsed) {
+    try {
+      store._parsed = {
+        data: JSON.parse(store.dataset.pts),
+        cfg: JSON.parse(store.dataset.cfg),
+      };
+    } catch(e) { return null; }
+  }
+  return store._parsed;
+}
+
 function pcChartSlide(id, idx) {
-  const data = window[id + '_data'];
-  const cfg = window[id + '_cfg'];
-  if (!data || !cfg) return;
+  const parsed = pcChartGetData(id);
+  if (!parsed) return;
+  const { data, cfg } = parsed;
   const i = parseInt(idx);
   const pt = data[i];
   if (!pt) return;
 
-  const svg = document.getElementById(id + '_svg');
   const cursor = document.getElementById(id + '_cursor');
   const dot = document.getElementById(id + '_dot');
   const tip = document.getElementById(id + '_tip');
-  if (!svg || !cursor || !dot || !tip) return;
+  if (!cursor || !dot || !tip) return;
 
   const n = data.length - 1;
   const x = cfg.padL + (i / Math.max(n, 1)) * cfg.iW;
@@ -5123,7 +5146,6 @@ function pcChartSlide(id, idx) {
   cursor.setAttribute('x1', x); cursor.setAttribute('x2', x); cursor.setAttribute('opacity', '0.5');
   dot.setAttribute('cx', x); dot.setAttribute('cy', y); dot.setAttribute('opacity', '1');
 
-  // Format date
   const parts = pt.d.split('-');
   const mon = MONTHS_SHORT[parseInt(parts[1]) - 1] || parts[1];
   const dateStr = `${mon} ${parseInt(parts[2])}, ${parts[0]}`;
@@ -5132,11 +5154,9 @@ function pcChartSlide(id, idx) {
   document.getElementById(id + '_tip_val').textContent = pt.v.toLocaleString();
   document.getElementById(id + '_tip_raw').textContent = 'RAW: ' + pt.r.toLocaleString();
 
-  // Position tooltip — convert SVG coords to element %
   const pctX = x / cfg.chartW * 100;
   const pctY = y / cfg.chartH * 100;
   tip.style.display = 'block';
-  // Flip tooltip to left side if near right edge
   if (pctX > 65) {
     tip.style.left = 'auto';
     tip.style.right = (100 - pctX + 2) + '%';
@@ -5166,22 +5186,8 @@ function buildPCScoringSection(name) {
   const ktcp = getKTCPlayer(name) || allPlayers.find(p => p.name === name);
   const pos  = ktcp?.position || ps?.pos || '';
 
-  // Scoring format from league context (or global)
-  const lid   = pcLeagueContext;
-  const lsf   = lid ? getLeagueParam(lid, 'sfMode')  : sfMode;
-  const ltep  = lid ? getLeagueParam(lid, 'tepTier') : tepTier;
-  const isTE  = pos === 'TE';
-  const isTEP = ltep !== 'off';
-
-  // TEP bonus per reception for TEs
-  const tepBonus = isTE && isTEP
-    ? (ltep === 'teppp' ? 2.0 : ltep === 'tepp' ? 1.0 : 0.5)
-    : 0;
-
-  // Format label for section title
-  const sfLbl  = lsf === 'sf' ? 'SF' : '1QB';
-  const tepLbl = { off:'', tep:' · TE+', tepp:' · TE++', teppp:' · TE+++' }[ltep] || '';
-  const fmtStr = `Half PPR · ${sfLbl}${tepLbl}`;
+  // Scoring data is from Player Profiler — always Half PPR, not TEP-adjusted
+  const fmtStr = 'Half PPR';
 
   if (!ps || !ps.seasons || !Object.keys(ps.seasons).length) {
     return `<div class="pc-section" id="pc-scoring-section">
@@ -5198,12 +5204,10 @@ function buildPCScoringSection(name) {
     `<button class="pc-season-pill ${yr===pcHistorySeason?'active':''}" onclick="pcSelectSeason(${yr})">${yr}</button>`
   ).join('');
 
-  // Multi-year PPG bars (TEP-adjusted for TEs if avgRec available)
+  // Multi-year PPG bars — raw half-PPR, no TEP adjustment
   const ppgs = years.map(yr => {
     const s = ps.seasons[yr];
-    let v = s.ppg || 0;
-    if (tepBonus > 0 && s.avgRec != null) v += tepBonus * s.avgRec;
-    return v;
+    return s.ppg || 0;
   });
   const games = years.map(yr => ps.seasons[yr]?.games || 0);
   const maxPPG = Math.max(...ppgs, 0.1);
@@ -5232,16 +5236,11 @@ function buildPCScoringSection(name) {
   }).join('');
   const ppgChart = `<svg width="100%" viewBox="0 0 ${totalW} ${bh+10}" preserveAspectRatio="xMinYMid meet" style="display:block;overflow:visible;margin-bottom:8px">${yGridlines}${bars}</svg>`;
 
-  // Weekly bars (TEP-adjusted if byWeekRec available)
+  // Weekly bars — raw half-PPR scores
   let weeklyChart = '';
   if (season.byWeek && Object.keys(season.byWeek).length > 1) {
     const weeks  = Object.keys(season.byWeek).map(Number).sort((a,b)=>a-b);
-    const byRec  = season.byWeekRec || {};
-    const wVals  = weeks.map(w => {
-      let v = season.byWeek[w] || 0;
-      if (tepBonus > 0 && byRec[w] != null) v += tepBonus * byRec[w];
-      return v;
-    });
+    const wVals  = weeks.map(w => season.byWeek[w] || 0);
     const maxW = Math.max(...wVals, 0.1);
     const nonZero = wVals.filter(v => v > 0);
     const avg = nonZero.length ? nonZero.reduce((a,b)=>a+b,0)/nonZero.length : 0;
@@ -5271,11 +5270,9 @@ function buildPCScoringSection(name) {
       ? `<line x1="${pL}" y1="${avgY.toFixed(1)}" x2="${(pL+iW2)}" y2="${avgY.toFixed(1)}" stroke="var(--accent3)" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.7"/>
          <text x="${(pL+iW2+3).toFixed(1)}" y="${avgY.toFixed(1)}" dominant-baseline="middle" fill="var(--accent3)" font-size="9" font-weight="500" font-family="DM Mono,monospace">${avg.toFixed(1)}</text>`
       : '';
-    const tepNote = tepBonus > 0 && Object.keys(byRec).length
-      ? ` <span style="color:var(--TE);font-size:9px">+${tepBonus}/REC TEP</span>` : '';
     weeklyChart = `<div style="margin-top:10px">
       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1.5px;margin-bottom:6px;display:flex;align-items:center;gap:8px">
-        <span>WEEKLY ${pcHistorySeason}</span>${tepNote}
+        <span>WEEKLY ${pcHistorySeason} · HALF PPR</span>
         <span style="display:inline-flex;align-items:center;gap:4px;margin-left:auto">
           <span style="display:inline-block;width:8px;height:2px;background:var(--accent);border-radius:1px"></span><span style="font-size:7px">20+</span>
           <span style="display:inline-block;width:8px;height:2px;background:var(--accent4);border-radius:1px"></span><span style="font-size:7px">10+</span>
@@ -5287,14 +5284,12 @@ function buildPCScoringSection(name) {
     </div>`;
   }
 
-  // Season summary
-  let ppgAdj = season.ppg || 0;
-  if (tepBonus > 0 && season.avgRec != null) ppgAdj += tepBonus * season.avgRec;
-  const tepNote2 = tepBonus > 0 && season.avgRec != null ? ` · ${ppgAdj.toFixed(1)} w/TEP` : '';
+  // Season summary — raw half-PPR
+  const ppgVal = season.ppg || 0;
 
   const summaryCards = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:6px;margin:10px 0">
     <div style="background:var(--surface3);border-radius:6px;padding:6px 8px;text-align:center">
-      <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--accent4)">${ppgAdj.toFixed(1)}</div>
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--accent4)">${ppgVal.toFixed(1)}</div>
       <div style="font-family:'DM Mono',monospace;font-size:7px;color:var(--muted);letter-spacing:1px">PPG</div>
     </div>
     <div style="background:var(--surface3);border-radius:6px;padding:6px 8px;text-align:center">
