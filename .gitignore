@@ -1,0 +1,56 @@
+# ── Credentials & secrets ──────────────────────────────────────────────────────
+ffpc-config.json
+dynasty-cert.pem
+dynasty-key.pem
+dynasty-cert.mobileconfig
+*.pem
+*.mobileconfig
+*.bak
+*.bakLATEST
+
+# ── Large / regenerated data ───────────────────────────────────────────────────
+ktc-cache.json
+ktc-redraft-cache.json
+ktc-history.json
+ktc-post-filtered.txt
+ffpc-cache.json
+ffpc-player-map.json
+ffpc-league-index.json
+ffpc-league-owners.json
+ffpc-owners-debug.js
+ffpc-seed-owners.js
+ffpc-build-index.js
+team-history.json
+player-stats.json
+leaguemates.json
+
+# ── Game log CSVs (large raw data) ────────────────────────────────────────────
+*-Advanced-Gamelog.csv
+Game-Logs/
+
+# ── Debug / probe / utility scripts ───────────────────────────────────────────
+ktc-debug.js
+ktc-debug2.js
+ktc-proxy-probe.js
+ktc-proxy-dnjwt.js
+ktc-proxy-hybrid.js
+ffpc-debug.html
+leagues.html
+dn-jwt-from-edge.js
+
+# ── Local-only (app.html is the deployable PWA version) ───────────────────────
+index.html
+
+# ── Node / logs ───────────────────────────────────────────────────────────────
+node_modules/
+*.log
+proxy.log
+serve.log
+startup.log
+.env
+
+# ── Windows / macOS ───────────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
+desktop.ini
+*:Zone.Identifier

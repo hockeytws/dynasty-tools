@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "level": "^10.0.0",
+    "puppeteer": "^24.40.0"
+  }
+}
