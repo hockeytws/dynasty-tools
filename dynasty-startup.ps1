@@ -6,7 +6,7 @@ $ports = @(3000, 3001)
 
 function Get-WslIp {
     try {
-        $ip = (wsl hostname -I 2>$null)
+        $ip = (wsl -u tyler -- hostname -I 2>$null)
         if ($ip) { return $ip.Trim().Split(" ")[0] }
     } catch {}
     return $null
@@ -66,9 +66,10 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     Update-PortProxy -wslIp $wslIp
     Ensure-Firewall
 
-    # Launch services via dedicated bash script
+    # Launch services via dedicated bash script — run as tyler, login shell
+    # Start as background job because start-services.sh now blocks (sleep infinity)
     Write-Host "  Launching services..."
-    wsl bash /home/tyler/dynasty-calc/start-services.sh
+    Start-Process -FilePath "wsl.exe" -ArgumentList "-u tyler -- bash -l /home/tyler/dynasty-calc/start-services.sh" -WindowStyle Hidden
 
     # Wait for ports to bind
     Write-Host "  Waiting for services to bind..."

@@ -2419,10 +2419,10 @@ function renderRosterBody(team) {
       const val = adjVal(p.name, pos, currentLeague);
       const key = `${p.name}||${pos}||${team.name}`;
       const state = lClickState[key];
-      return `<div class="ppill ${state?'state-'+state:''}"
-        onclick="lHandlePlayerClick('${esc(p.name)}','${pos}','${esc(team.name)}',${val})">
+      return `<div class="ppill"
+        onclick="openPlayerCard('${esc(p.name)}',currentLeague)" style="cursor:pointer">
         <span class="dot" style="background:${posColor(pos)}"></span>
-        <span class="ppill-name" onclick="event.stopPropagation();openPlayerCard('${esc(p.name)}',currentLeague)" style="cursor:pointer">${p.name}</span>
+        <span class="ppill-name">${p.name}</span>
         <span class="ppill-team">${p.nflTeam}</span>
         <span class="ppill-val ${val>0?'has-val':''}">${fmtV(val)}${rawKtcSpan(p.name,pos)}</span>
       </div>`;
@@ -4844,13 +4844,30 @@ function buildPCValueHistorySection(name) {
   // Build chart points for selected field
   const histDates = Object.keys(ktcHistory).sort();
   const pts = [];
-  // For SF no-TEP field ('value'), TEs often have 0 — fall back to tep field
-  const fallbackField = (field === 'value') ? 'tep' : (field === 'oneqb') ? 'tep_1qb' : null;
+  // KTC history: 'value' = SF no-TEP (often 0 from backfill), 'oneqb' = 1QB no-TEP
+  // Fallback chain: sf→tep→oneqb, oneqb→tep_1qb→oneqb, tep variants→oneqb variants
+  const FALLBACKS = {
+    'value': ['tep','tepp','teppp','oneqb'],
+    'oneqb': ['tep_1qb','tepp_1qb','teppp_1qb'],
+    'tep':   ['tepp','teppp','value','oneqb'],
+    'tepp':  ['tep','teppp','value','oneqb'],
+    'teppp': ['tepp','tep','value','oneqb'],
+    'tep_1qb':   ['tepp_1qb','teppp_1qb','oneqb'],
+    'tepp_1qb':  ['tep_1qb','teppp_1qb','oneqb'],
+    'teppp_1qb': ['tepp_1qb','tep_1qb','oneqb'],
+  };
+  const fallbacks = FALLBACKS[field] || [];
+  let usedFallback = false;
   for (const d of histDates) {
     const snap = ktcHistory[d];
     if (!snap || !snap[name]) continue;
     let v = snap[name][field] || 0;
-    if (v <= 0 && fallbackField) v = snap[name][fallbackField] || 0;
+    if (v <= 0) {
+      for (const fb of fallbacks) {
+        v = snap[name][fb] || 0;
+        if (v > 0) { usedFallback = true; break; }
+      }
+    }
     if (v <= 0) continue;
     pts.push({ d, v });
   }
@@ -4869,9 +4886,12 @@ function buildPCValueHistorySection(name) {
     }).join('')}
   </div>`;
 
+  const fallbackNote = usedFallback
+    ? ` <span style="color:var(--accent2);font-size:7px" title="Exact format not in history — showing closest available">~APPROX</span>`
+    : '';
   const sectionTitle = isDyn
-    ? `DYNASTY VALUE HISTORY · <span style="color:var(--accent4);font-size:8px">${FMT_LABEL[pcHistoryFormat]||pcHistoryFormat}</span>`
-    : `REDRAFT VALUE HISTORY · <span style="color:var(--accent3);font-size:8px">${FMT_LABEL[pcHistoryFormat]||pcHistoryFormat}</span>`;
+    ? `DYNASTY VALUE HISTORY · <span style="color:var(--accent4);font-size:8px">${FMT_LABEL[pcHistoryFormat]||pcHistoryFormat}</span>${fallbackNote}`
+    : `REDRAFT VALUE HISTORY · <span style="color:var(--accent3);font-size:8px">${FMT_LABEL[pcHistoryFormat]||pcHistoryFormat}</span>${fallbackNote}`;
 
   const noDataMsg = `<div class="pc-chart-wrap">${tabRow}${fmtPills}<div class="pc-no-data">No history yet for this format · Run backfill or wait for daily snapshots</div></div>`;
 
@@ -5002,7 +5022,7 @@ function buildPCScoringSection(name) {
     const maxW = Math.max(...wVals, 0.1);
     const nonZero = wVals.filter(v => v > 0);
     const avg = nonZero.length ? nonZero.reduce((a,b)=>a+b,0)/nonZero.length : 0;
-    const cW=560,cH=70,pL=24,pR=8,pT=6,pB=16;
+    const cW=560,cH=90,pL=24,pR=8,pT=10,pB=20;
     const iW2=cW-pL-pR, iH2=cH-pT-pB;
     const bw2 = Math.max(3, iW2/weeks.length - 2);
     const avgY = pT + iH2 - (avg/maxW)*iH2;
@@ -5011,10 +5031,18 @@ function buildPCScoringSection(name) {
       const barH2 = (v/maxW)*iH2;
       const y2 = pT+iH2-barH2;
       const col = v===0?'var(--border2)':v>=20?'var(--accent)':v>=10?'var(--accent4)':'var(--accent2)';
-      return `<rect x="${(x-bw2/2).toFixed(1)}" y="${y2.toFixed(1)}" width="${bw2.toFixed(1)}" height="${Math.max(0,barH2).toFixed(1)}" rx="1.5" fill="${col}" opacity="0.85"/>`;
+      // Show value label above bar if bar is tall enough, otherwise below
+      const labelY = barH2 > 14 ? y2 + barH2/2 : y2 - 3;
+      const labelAnchor = 'middle';
+      const valLabel = v > 0
+        ? `<text x="${x.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="${labelAnchor}" dominant-baseline="${barH2>14?'middle':'auto'}" fill="${barH2>14?'var(--bg)':'var(--muted)'}" font-size="7" font-family="DM Mono,monospace" opacity="0.9">${v.toFixed(1)}</text>`
+        : '';
+      const wkLabel = `<text x="${x.toFixed(1)}" y="${(pT+iH2+13).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace">W${weeks[i]}</text>`;
+      return `<rect x="${(x-bw2/2).toFixed(1)}" y="${y2.toFixed(1)}" width="${bw2.toFixed(1)}" height="${Math.max(0,barH2).toFixed(1)}" rx="1.5" fill="${col}" opacity="0.85"/>${valLabel}`;
     }).join('');
+    // Show week labels at start, middle, end only (bars already show values)
     const wLabels = [0,Math.floor(weeks.length/2),weeks.length-1].filter((v,i,a)=>a.indexOf(v)===i).map(i =>
-      `<text x="${(pL+(i/(Math.max(weeks.length-1,1)))*iW2).toFixed(1)}" y="${(pT+iH2+13).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">Wk ${weeks[i]}</text>`
+      `<text x="${(pL+(i/(Math.max(weeks.length-1,1)))*iW2).toFixed(1)}" y="${(pT+iH2+13).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace">Wk ${weeks[i]}</text>`
     ).join('');
     const avgLine = avg > 0
       ? `<line x1="${pL}" y1="${avgY.toFixed(1)}" x2="${(pL+iW2).toFixed(1)}" y2="${avgY.toFixed(1)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>
@@ -5034,6 +5062,26 @@ function buildPCScoringSection(name) {
   const tepNote2 = tepBonus > 0 && season.avgRec != null ? ` · ${ppgAdj.toFixed(1)} w/TEP` : '';
   const gStr = `${season.games} GM · ${season.totalPoints.toFixed(0)} PTS${tepNote2}${season.avgSnapPct>0?' · '+season.avgSnapPct.toFixed(0)+'% SNAP':''}`;
 
+  // Game-by-game table for selected season
+  const gameRows = season.byWeek ? Object.keys(season.byWeek).map(Number).sort((a,b)=>a-b).map(wk => {
+    let pts = season.byWeek[wk] || 0;
+    if (tepBonus > 0 && (season.byWeekRec||{})[wk] != null) pts += tepBonus * season.byWeekRec[wk];
+    const col = pts===0?'var(--muted)':pts>=20?'var(--accent)':pts>=10?'var(--accent4)':'var(--accent2)';
+    const snaps = season.byWeekSnaps ? (season.byWeekSnaps[wk] || '—') : '—';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)">
+      <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);width:28px;flex-shrink:0">Wk ${wk}</span>
+      <div style="flex:1;height:5px;background:var(--surface3);border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${Math.min(100,(pts/Math.max(...Object.values(season.byWeek)))*100).toFixed(1)}%;background:${col};border-radius:3px"></div>
+      </div>
+      <span style="font-family:'Bebas Neue',sans-serif;font-size:14px;color:${col};width:36px;text-align:right;flex-shrink:0">${pts.toFixed(1)}</span>
+    </div>`;
+  }).join('') : '';
+
+  const gameLog = gameRows ? `<div style="margin-top:10px">
+    <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--muted);letter-spacing:1.5px;margin-bottom:4px">GAME LOG ${pcHistorySeason}</div>
+    ${gameRows}
+  </div>` : '';
+
   return `<div class="pc-section" id="pc-scoring-section">
     <div class="pc-section-title">SCORING HISTORY <span style="color:var(--muted);font-size:8px">· ${fmtStr}</span></div>
     <div class="pc-chart-wrap">
@@ -5041,6 +5089,7 @@ function buildPCScoringSection(name) {
       <div class="pc-season-grid">${pills}</div>
       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin:6px 0">${pcHistorySeason}: ${gStr}</div>
       ${weeklyChart}
+      ${gameLog}
     </div>
   </div>`;
 }
