@@ -4492,6 +4492,7 @@ async function init() {
 // KTC HISTORY & PLAYER STATS
 // ════════════════════════════════════════════════════════════════════════════
 let ktcHistory = {};
+let ktcRedraftHistory = {};
 let teamHistory = {};  // leagueId → {teams:{slug:{names,dates,transactions}}}
 let teamHistoryLoaded = false;
 const TEAM_HIST_LS_KEY = 'dynastyCalc_teamHistory_v1';
@@ -4504,15 +4505,32 @@ async function loadTeamHistory() {
 }
 let playerStats = {};
 let historyLoaded = false;
+let redraftHistoryLoaded = false;
 let statsLoaded = false;
 
 const KTC_HISTORY_LS_KEY  = 'dynastyCalc_ktcHistory_v1';
+const KTC_RD_HISTORY_LS_KEY = 'dynastyCalc_ktcRedraftHistory_v1';
 const PLAYER_STATS_LS_KEY = 'dynastyCalc_playerStats_v1';
 
 async function loadKtcHistory() {
   try {
     const raw = localStorage.getItem('dynastyCalc_ktcHistory_v1');
     if (raw) { ktcHistory = JSON.parse(raw); historyLoaded = true; }
+  } catch(e) {}
+}
+
+async function loadKtcRedraftHistory() {
+  try {
+    const r = await fetch(`${PROXY}/ktc-redraft-history`);
+    if (r.ok) {
+      ktcRedraftHistory = await r.json();
+      try { localStorage.setItem(KTC_RD_HISTORY_LS_KEY, JSON.stringify(ktcRedraftHistory)); } catch(e) {}
+      redraftHistoryLoaded = true; return;
+    }
+  } catch(e) {}
+  try {
+    const raw = localStorage.getItem(KTC_RD_HISTORY_LS_KEY);
+    if (raw) { ktcRedraftHistory = JSON.parse(raw); redraftHistoryLoaded = true; }
   } catch(e) {}
 }
 
@@ -4552,6 +4570,7 @@ async function initProfilesTab() {
   if (!profsReady) {
     profsReady = true;
     if (!historyLoaded) await loadKtcHistory().catch(() => {});
+    if (!redraftHistoryLoaded) loadKtcRedraftHistory().catch(() => {}); // non-blocking
     if (!statsLoaded)   await loadPlayerStats().catch(() => {});
   }
   renderProfList();
@@ -4768,6 +4787,7 @@ function pcFormatLabel(leagueId) {
 
 function openPlayerCard(name, leagueId = null) {
   if (!historyLoaded) loadKtcHistory().catch(() => {});
+  if (!redraftHistoryLoaded) loadKtcRedraftHistory().catch(() => {});
   if (!teamHistoryLoaded) loadTeamHistory().catch(() => {});
   if (!statsLoaded)   loadPlayerStats().catch(() => {});
   const overlay = document.getElementById('pc-overlay');
@@ -4913,18 +4933,37 @@ function buildPCValueHistorySection(name) {
   const activeAccent = isDyn ? 'var(--accent)' : 'var(--accent3)';
   const activeBg     = isDyn ? 'rgba(0,229,160,0.1)' : 'rgba(255,209,102,0.1)';
 
-  // Build chart points for selected field
-  const histDates = Object.keys(ktcHistory).sort();
+  // Adjustment formula — apply dynasty or redraft curve to raw KTC values
+  const lid = pcLeagueContext;
+  function adjDyn(raw) {
+    const fl = lid ? getLeagueParam(lid, 'deduction') : deduction;
+    const sf = lid ? getLeagueParam(lid, 'scaleFactor') : scaleFactor;
+    const ex = lid ? getLeagueParam(lid, 'exponent') : exponent;
+    const above = raw - fl;
+    if (above <= 0) return 0;
+    return sf * Math.pow(above, ex) / Math.pow(MAX_RAW_VAL - fl, ex);
+  }
+  function adjRd(raw) {
+    const above = raw - redraftFloor;
+    if (above <= 0) return 0;
+    return scaleFactor * Math.pow(above, redraftExponent) / Math.pow(MAX_RAW_VAL - redraftFloor, redraftExponent);
+  }
+  const adjFn = isDyn ? adjDyn : adjRd;
+
+  // Build chart points for selected field, applying adjustment
+  const histSource = isDyn ? ktcHistory : ktcRedraftHistory;
+  const histDates = Object.keys(histSource).sort();
   const pts = [];
-  // For SF no-TEP field ('value'), TEs often have 0 — fall back to tep field
   const fallbackField = (field === 'value') ? 'tep' : (field === 'oneqb') ? 'tep_1qb' : null;
   for (const d of histDates) {
-    const snap = ktcHistory[d];
+    const snap = histSource[d];
     if (!snap || !snap[name]) continue;
-    let v = snap[name][field] || 0;
-    if (v <= 0 && fallbackField) v = snap[name][fallbackField] || 0;
+    let raw = snap[name][field] || 0;
+    if (raw <= 0 && fallbackField) raw = snap[name][fallbackField] || 0;
+    if (raw <= 0) continue;
+    const v = adjFn(raw);
     if (v <= 0) continue;
-    pts.push({ d, v });
+    pts.push({ d, v, raw });
   }
 
   // Tab row
@@ -4941,9 +4980,8 @@ function buildPCValueHistorySection(name) {
     }).join('')}
   </div>`;
 
-  const sectionTitle = isDyn
-    ? `DYNASTY VALUE HISTORY · <span style="color:var(--accent4);font-size:8px">${FMT_LABEL[pcHistoryFormat]||pcHistoryFormat}</span>`
-    : `REDRAFT VALUE HISTORY · <span style="color:var(--accent3);font-size:8px">${FMT_LABEL[pcHistoryFormat]||pcHistoryFormat}</span>`;
+  const modeLabel = isDyn ? 'DYNASTY' : 'REDRAFT';
+  const sectionTitle = `${modeLabel} VALUE HISTORY · <span style="color:var(--accent4);font-size:8px">${FMT_LABEL[pcHistoryFormat]||pcHistoryFormat} · ADJUSTED</span>`;
 
   const noDataMsg = `<div class="pc-chart-wrap">${tabRow}${fmtPills}<div class="pc-no-data">No history yet for this format · Run backfill or wait for daily snapshots</div></div>`;
 
@@ -4954,7 +4992,8 @@ function buildPCValueHistorySection(name) {
     </div>`;
   }
 
-  const chartW=560, chartH=120, padL=42, padR=8, padT=8, padB=22;
+  // Chart dimensions — taller with room for labels
+  const chartW=580, chartH=160, padL=50, padR=12, padT=12, padB=36;
   const iW=chartW-padL-padR, iH=chartH-padT-padB;
   const vals = pts.map(p => p.v);
   const minV=Math.min(...vals), maxV=Math.max(...vals);
@@ -4966,34 +5005,74 @@ function buildPCValueHistorySection(name) {
   const areaD = pathD + ` L${toX(pts.length-1).toFixed(1)},${(padT+iH).toFixed(1)} L${toX(0).toFixed(1)},${(padT+iH).toFixed(1)} Z`;
 
   const trend = vals[vals.length-1]-vals[0];
-  const lc = isDyn
-    ? (trend >= 0 ? 'var(--accent)' : 'var(--accent2)')
-    : 'var(--accent3)';
+  const lc = trend >= 0 ? (isDyn ? 'var(--accent)' : 'var(--accent3)') : 'var(--accent2)';
 
-  const gid = `pcg_${field.replace(/[^a-z0-9]/g,'_')}`;
-  const yTicks = [minV, minV+range/2, maxV].map(v =>
-    `<text x="${padL-4}" y="${toY(v).toFixed(1)}" text-anchor="end" dominant-baseline="middle" fill="var(--muted)" font-size="9" font-family="DM Mono,monospace">${(v/1000).toFixed(1)}k</text>`
-  ).join('');
-  const xIdxs = [0, Math.floor(pts.length/2), pts.length-1];
-  const xLabels = xIdxs.map(i =>
-    `<text x="${toX(i).toFixed(1)}" y="${(padT+iH+14).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">${pts[i].d.slice(5)}</text>`
-  ).join('');
+  const gid = `pcg_${field.replace(/[^a-z0-9]/g,'_')}_${isDyn?'d':'r'}`;
+
+  // Y-axis: nice round gridlines
+  const yGridStep = range > 5000 ? 2000 : range > 2000 ? 1000 : range > 800 ? 500 : range > 300 ? 200 : 100;
+  const yGridStart = Math.floor(minV / yGridStep) * yGridStep;
+  const yGridLines = [];
+  for (let v = yGridStart; v <= maxV + yGridStep; v += yGridStep) {
+    if (v < minV - yGridStep * 0.5) continue;
+    if (v > maxV + yGridStep * 0.5) continue;
+    const y = toY(v);
+    yGridLines.push(`<line x1="${padL}" y1="${y.toFixed(1)}" x2="${padL+iW}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="0.5" opacity="0.4"/>
+      <text x="${padL-5}" y="${y.toFixed(1)}" text-anchor="end" dominant-baseline="middle" fill="var(--muted)" font-size="9" font-family="DM Mono,monospace">${v >= 1000 ? (v/1000).toFixed(1)+'k' : Math.round(v)}</text>`);
+  }
+
+  // X-axis: show ~6-8 dates, nicely formatted
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const dateCount = Math.min(8, Math.max(4, Math.floor(pts.length / 25)));
+  const xLabels = [];
+  for (let i = 0; i < dateCount; i++) {
+    const idx = Math.round(i * (pts.length - 1) / (dateCount - 1));
+    const d = pts[idx].d;
+    const parts = d.split('-');
+    const mon = MONTHS[parseInt(parts[1])-1] || parts[1];
+    const day = parseInt(parts[2]);
+    const label = `${mon} ${day}`;
+    const x = toX(idx);
+    xLabels.push(`<line x1="${x.toFixed(1)}" y1="${padT}" x2="${x.toFixed(1)}" y2="${(padT+iH).toFixed(1)}" stroke="var(--border)" stroke-width="0.5" opacity="0.2"/>
+      <text x="${x.toFixed(1)}" y="${(padT+iH+14).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">${label}</text>`);
+  }
+  // Add year label if dates span multiple years
+  const firstYear = pts[0].d.slice(0,4), lastYear = pts[pts.length-1].d.slice(0,4);
+  const yearLabel = firstYear !== lastYear
+    ? `<text x="${(padL+iW/2).toFixed(1)}" y="${(padT+iH+27).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace" opacity="0.6">${firstYear} — ${lastYear}</text>`
+    : `<text x="${(padL+iW/2).toFixed(1)}" y="${(padT+iH+27).toFixed(1)}" text-anchor="middle" fill="var(--muted)" font-size="7" font-family="DM Mono,monospace" opacity="0.6">${firstYear}</text>`;
+
+  // Current value + change badges
+  const curVal = vals[vals.length-1];
+  const curRaw = pts[pts.length-1].raw;
+  const changeAbs = Math.round(curVal - vals[0]);
+  const changePct = vals[0] > 0 ? ((curVal - vals[0]) / vals[0] * 100).toFixed(1) : '0';
+  const changeColor = changeAbs >= 0 ? 'var(--accent)' : 'var(--accent2)';
+  const changeSign = changeAbs >= 0 ? '+' : '';
 
   return `<div class="pc-section" id="pc-hist-section">
     <div class="pc-section-title">${sectionTitle}</div>
     <div class="pc-chart-wrap">
       ${tabRow}
       ${fmtPills}
-      <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--muted);margin-bottom:4px">${pts.length} SNAPSHOTS · CURRENT: ${vals[vals.length-1].toLocaleString()}</div>
-      <svg width="100%" viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="none" style="display:block;overflow:visible">
+      <div style="display:flex;align-items:center;gap:10px;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:6px;flex-wrap:wrap">
+        <span>${pts.length} SNAPSHOTS</span>
+        <span style="color:${isDyn?'var(--accent)':'var(--accent3)'}">CURRENT: ${fmtV(curVal)}</span>
+        <span style="color:var(--muted);font-size:8px">RAW: ${curRaw.toLocaleString()}</span>
+        <span style="color:${changeColor}">${changeSign}${fmtV(changeAbs)} (${changeSign}${changePct}%)</span>
+      </div>
+      <svg width="100%" viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="xMidYMid meet" style="display:block;overflow:visible">
         <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="${lc}" stop-opacity="0.18"/>
           <stop offset="100%" stop-color="${lc}" stop-opacity="0.01"/>
         </linearGradient></defs>
+        ${yGridLines.join('')}
+        ${xLabels.join('')}
+        ${yearLabel}
         <path d="${areaD}" fill="url(#${gid})"/>
         <path d="${pathD}" fill="none" stroke="${lc}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        ${yTicks}${xLabels}
-        <circle cx="${toX(pts.length-1).toFixed(1)}" cy="${toY(vals[vals.length-1]).toFixed(1)}" r="3" fill="${lc}"/>
+        <circle cx="${toX(pts.length-1).toFixed(1)}" cy="${toY(vals[vals.length-1]).toFixed(1)}" r="3.5" fill="${lc}"/>
+        <circle cx="${toX(0).toFixed(1)}" cy="${toY(vals[0]).toFixed(1)}" r="2.5" fill="${lc}" opacity="0.5"/>
       </svg>
     </div>
   </div>`;

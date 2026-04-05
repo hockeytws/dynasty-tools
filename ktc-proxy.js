@@ -29,20 +29,31 @@ const REDRAFT_CACHE_FILE  = path.join(__dirname, 'ktc-redraft-cache.json');
 const FFPC_CACHE_FILE     = path.join(__dirname, 'ffpc-cache.json');
 const LEAGUEMATES_FILE    = path.join(__dirname, 'leaguemates.json');
 const HISTORY_FILE        = path.join(__dirname, 'ktc-history.json');
+const REDRAFT_HISTORY_FILE = path.join(__dirname, 'ktc-redraft-history.json');
 const PLAYER_STATS_FILE   = path.join(__dirname, 'player-stats.json');
 const TEAM_HISTORY_FILE   = path.join(__dirname, 'team-history.json');
 
 // ── KTC value history ─────────────────────────────────────────────────────────
-// Structure: { "2025-04-01": { "Player Name": { value, oneqb, pos, team }, ... }, ... }
+// Structure: { "2025-04-01": { "Player Name": { value, oneqb, tep, ..., pos, team }, ... }, ... }
 let ktcHistory = {};
 let backfillInProgress = false;
 let backfillProgress = { done: 0, total: 0, status: 'idle' };
+
+// ── KTC redraft value history ────────────────────────────────────────────────
+// Structure: same as ktcHistory but with redraft values
+let ktcRedraftHistory = {};
 
 if (fs.existsSync(HISTORY_FILE)) {
   try {
     ktcHistory = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
     console.log(`KTC history: ${Object.keys(ktcHistory).length} days`);
   } catch(e) { console.log('KTC history load failed:', e.message); }
+}
+if (fs.existsSync(REDRAFT_HISTORY_FILE)) {
+  try {
+    ktcRedraftHistory = JSON.parse(fs.readFileSync(REDRAFT_HISTORY_FILE, 'utf8'));
+    console.log(`KTC redraft history: ${Object.keys(ktcRedraftHistory).length} days`);
+  } catch(e) { console.log('KTC redraft history load failed:', e.message); }
 }
 
 // ── Player stats (from Player Profiler game logs) ────────────────────────────
@@ -179,6 +190,9 @@ function snapshotTeamValues(dateStr) {
 
 function saveHistory() {
   fs.writeFileSync(HISTORY_FILE, JSON.stringify(ktcHistory));
+}
+function saveRedraftHistory() {
+  fs.writeFileSync(REDRAFT_HISTORY_FILE, JSON.stringify(ktcRedraftHistory));
 }
 
 // Return today's date string in local time: "2025-04-01"
@@ -859,12 +873,123 @@ async function backfillKTCHistory() {
     saveHistory();
     backfillProgress.status = 'done';
     console.log(`Backfill complete: ${Object.keys(ktcHistory).length} dates in history.`);
+
+    // Post-backfill verification: check a TE player has distinct SF/TEP values
+    const dates = Object.keys(ktcHistory).sort();
+    if (dates.length > 0) {
+      const sampleDate = dates[Math.floor(dates.length / 2)];
+      const snap = ktcHistory[sampleDate];
+      const teNames = Object.keys(snap).filter(n => snap[n].pos === 'TE');
+      if (teNames.length > 0) {
+        const te = snap[teNames[0]];
+        const sfOk = te.value > 0;
+        const tepOk = te.tep > 0 && te.tep !== te.value;
+        if (!sfOk) console.warn('BACKFILL WARNING: SF values are 0 — parseAllHistories may have wrong field names');
+        if (!tepOk) console.warn('BACKFILL WARNING: TEP values missing or identical to SF — check tepHistory parsing');
+        if (sfOk && tepOk) console.log(`Backfill verified: ${teNames[0]} on ${sampleDate} — SF=${te.value} TEP=${te.tep} 1QB=${te.oneqb} TEP_1QB=${te.tep_1qb}`);
+      }
+    }
   } catch(err) {
     backfillProgress.status = 'error: ' + err.message;
     backfillInProgress = false;
     throw err;
   }
   backfillInProgress = false;
+}
+
+// ── Redraft history backfill ──────────────────────────────────────────────────
+// KTC /fantasy-rankings/histories returns ALL players in one response regardless of input
+function ktcRedraftHistoriesPost() {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify([{playerID: 1}]); // ID doesn't matter — returns all
+    const opts = {
+      hostname: 'keeptradecut.com',
+      path: '/fantasy-rankings/histories',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36',
+        'Accept': 'application/json',
+        'Origin': 'https://keeptradecut.com',
+        'Referer': 'https://keeptradecut.com/fantasy-rankings',
+      },
+    };
+    let raw = '';
+    const req = https.request(opts, res => {
+      res.on('data', c => raw += c);
+      res.on('end', () => {
+        if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}: ${raw.slice(0,200)}`));
+        try { resolve(JSON.parse(raw)); }
+        catch(e) { reject(new Error('Redraft history JSON parse failed')); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    req.setTimeout(30000);
+    req.write(body);
+    req.end();
+  });
+}
+
+async function backfillRedraftHistory() {
+  console.log('Redraft history backfill starting...');
+  try {
+    const results = await ktcRedraftHistoriesPost();
+    if (!Array.isArray(results)) throw new Error('Unexpected response shape');
+
+    // Build ID → player name lookup from cached redraft data
+    const idToName = {};
+    if (redraftData) {
+      redraftData.forEach(p => { if (p.id && p.name) idToName[String(p.id)] = p; });
+    }
+    // Also use dynasty cache for name/pos lookup
+    if (cachedData) {
+      cachedData.forEach(p => { if (p.id && p.name && !idToName[String(p.id)]) idToName[String(p.id)] = p; });
+    }
+
+    let playerCount = 0;
+    for (const entry of results) {
+      const player = idToName[String(entry.playerID)];
+      if (!player) continue;
+
+      const hists = parseAllHistories(entry);
+      const maps = {};
+      for (const [key, arr] of Object.entries(hists)) {
+        maps[key] = {};
+        for (const {dateStr, value} of arr) maps[key][dateStr] = value;
+      }
+
+      const allDates = new Set([
+        ...hists.sf.map(e => e.dateStr),
+        ...hists.oneqb.map(e => e.dateStr),
+        ...hists.tep.map(e => e.dateStr),
+        ...hists.tep_1qb.map(e => e.dateStr),
+      ]);
+
+      for (const ds of allDates) {
+        if (!ktcRedraftHistory[ds]) ktcRedraftHistory[ds] = {};
+        ktcRedraftHistory[ds][player.name] = {
+          value:     maps.sf[ds]        || 0,
+          oneqb:     maps.oneqb[ds]     || 0,
+          tep:       maps.tep[ds]       || maps.sf[ds]    || 0,
+          tepp:      maps.tepp[ds]      || maps.sf[ds]    || 0,
+          teppp:     maps.teppp[ds]     || maps.sf[ds]    || 0,
+          tep_1qb:   maps.tep_1qb[ds]  || maps.oneqb[ds] || 0,
+          tepp_1qb:  maps.tepp_1qb[ds] || maps.oneqb[ds] || 0,
+          teppp_1qb: maps.teppp_1qb[ds]|| maps.oneqb[ds] || 0,
+          pos:  player.position || '',
+          team: player.team     || '',
+        };
+      }
+      if (allDates.size) playerCount++;
+    }
+
+    saveRedraftHistory();
+    console.log(`Redraft backfill complete: ${Object.keys(ktcRedraftHistory).length} dates, ${playerCount} players`);
+  } catch(err) {
+    console.error('Redraft backfill failed:', err.message);
+  }
 }
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
@@ -1079,7 +1204,9 @@ const requestHandler = async (req, res) => {
     if (backfillInProgress) { res.writeHead(202); res.end(JSON.stringify({ status: 'in_progress', ...backfillProgress })); return; }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'started', total: cachedData ? cachedData.filter(p => p.position !== 'RDP').length : 0 }));
-    backfillKTCHistory().catch(e => console.error('Backfill failed:', e.message));
+    backfillKTCHistory()
+      .then(() => backfillRedraftHistory())
+      .catch(e => console.error('Backfill failed:', e.message));
     return;
   }
 
@@ -1087,6 +1214,21 @@ const requestHandler = async (req, res) => {
   if (req.method === 'GET' && url === '/ktc-history/backfill-status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ inProgress: backfillInProgress, ...backfillProgress, historyDays: Object.keys(ktcHistory).length }));
+    return;
+  }
+
+  // GET /ktc-redraft-history — return redraft history object
+  if (req.method === 'GET' && url === '/ktc-redraft-history') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(ktcRedraftHistory));
+    return;
+  }
+
+  // POST /ktc-redraft-history/backfill — kick off redraft history backfill
+  if (req.method === 'POST' && url === '/ktc-redraft-history/backfill') {
+    backfillRedraftHistory().catch(e => console.error('Redraft backfill error:', e.message));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'started' }));
     return;
   }
 
@@ -1148,12 +1290,15 @@ const requestHandler = async (req, res) => {
   if (req.method === 'GET' && url === '/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
+      version: PROXY_VERSION,
       hasCachedData: !!cachedData,
       playerCount: cachedData ? cachedData.length : 0,
       cachedAt: cacheTimestamp ? new Date(cacheTimestamp).toLocaleString() : null,
       ageMinutes: cacheTimestamp ? Math.round((Date.now() - cacheTimestamp) / 60000) : null,
       scrapeInProgress,
       ffpcLeagues: Object.keys(ffpcCache),
+      historyDays: Object.keys(ktcHistory).length,
+      teamHistoryLeagues: Object.keys(teamHistory).length,
     }));
     return;
   }
@@ -2152,8 +2297,28 @@ const finalHandler = async (req, res) => {
 };
 
 // ── Startup: fill any missed history snapshots + start daily scheduler ────────
+const PROXY_VERSION = '2026-04-05.1';  // Bump this on every deploy
+console.log(`Dynasty Tools Proxy v${PROXY_VERSION}`);
+
 if (cachedData && cachedData.length) {
   fillMissedSnapshots(cachedData);
+
+  // Verify today's snapshot has correct SF values
+  const todaySnap = ktcHistory[todayStr()];
+  if (todaySnap) {
+    const teCheck = Object.entries(todaySnap).find(([n, d]) => d.pos === 'TE' && d.value > 0);
+    if (teCheck) {
+      console.log(`Startup data check: ${teCheck[0]} — SF=${teCheck[1].value} TEP=${teCheck[1].tep} 1QB=${teCheck[1].oneqb}`);
+    } else {
+      // SF values are 0 for TEs — likely stale snapshot from old code. Delete and re-snapshot.
+      const teAny = Object.entries(todaySnap).find(([n, d]) => d.pos === 'TE');
+      if (teAny && teAny[1].value === 0 && teAny[1].oneqb > 0) {
+        console.warn(`Startup: today's snapshot has SF=0 for ${teAny[0]} — deleting and re-snapshotting`);
+        delete ktcHistory[todayStr()];
+        snapshotDate(todayStr(), cachedData);
+      }
+    }
+  }
 }
 // Auto-snapshot team values on boot if we have both KTC + FFPC data
 if (cachedData && cachedData.length && Object.keys(ffpcCache).length) {
