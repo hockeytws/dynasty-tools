@@ -183,6 +183,13 @@ js = replace_fn_body(js, 'async function loadKtcHistory()',
     if (raw) { ktcHistory = JSON.parse(raw); historyLoaded = true; }
   } catch(e) {}''')
 
+# 5b2. loadKtcRedraftHistory — read from localStorage only in app.html
+js = replace_fn_body(js, 'async function loadKtcRedraftHistory()',
+    '''  try {
+    const raw = localStorage.getItem('dynastyCalc_ktcRedraftHistory_v1');
+    if (raw) { ktcRedraftHistory = JSON.parse(raw); redraftHistoryLoaded = true; }
+  } catch(e) {}''')
+
 # 5c. loadPlayerStats — read from localStorage only in app.html
 js = replace_fn_body(js, 'async function loadPlayerStats()',
     '''  try {
@@ -389,6 +396,16 @@ async function syncAll() {
       steps.push('History \u2713');
     } else { steps.push('History \u2717'); }
   } catch(e) { steps.push('History \u2717'); }
+
+  try {
+    const rrh = await fetch(PROXY + '/ktc-redraft-history', { signal: AbortSignal.timeout(30000) });
+    if (rrh.ok) {
+      const rdHist = await rrh.json();
+      localStorage.setItem('dynastyCalc_ktcRedraftHistory_v1', JSON.stringify(rdHist));
+      ktcRedraftHistory = rdHist; redraftHistoryLoaded = true;
+      steps.push('RD Hist \u2713');
+    } else { steps.push('RD Hist \u2717'); }
+  } catch(e) { steps.push('RD Hist \u2717'); }
 
   try {
     const rp = await fetch(PROXY + '/player-stats', { signal: AbortSignal.timeout(30000) });

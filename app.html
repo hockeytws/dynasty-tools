@@ -4521,15 +4521,7 @@ async function loadKtcHistory() {
 
 async function loadKtcRedraftHistory() {
   try {
-    const r = await fetch(`${PROXY}/ktc-redraft-history`);
-    if (r.ok) {
-      ktcRedraftHistory = await r.json();
-      try { localStorage.setItem(KTC_RD_HISTORY_LS_KEY, JSON.stringify(ktcRedraftHistory)); } catch(e) {}
-      redraftHistoryLoaded = true; return;
-    }
-  } catch(e) {}
-  try {
-    const raw = localStorage.getItem(KTC_RD_HISTORY_LS_KEY);
+    const raw = localStorage.getItem('dynastyCalc_ktcRedraftHistory_v1');
     if (raw) { ktcRedraftHistory = JSON.parse(raw); redraftHistoryLoaded = true; }
   } catch(e) {}
 }
@@ -5071,7 +5063,7 @@ function buildPCValueHistorySection(name) {
         <span>${pts.length} SNAPSHOTS</span>
         <span style="color:${isDyn?'var(--accent)':'var(--accent3)'}">CURRENT: ${fmtV(curVal)}</span>
         <span style="color:var(--muted);font-size:8px">RAW: ${curRaw.toLocaleString()}</span>
-        <span style="color:${changeColor}">${changeSign}${fmtV(changeAbs)} (${changeSign}${changePct}%)</span>
+        <span id="${chartId}_change" style="color:${changeColor}">${changeSign}${fmtV(Math.abs(changeAbs))} (${changeSign}${changePct}%)</span>
       </div>
       <div style="position:relative">
         <svg id="${chartId}_svg" width="100%" viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="xMidYMid meet" style="display:block;overflow:visible">
@@ -5094,15 +5086,17 @@ function buildPCValueHistorySection(name) {
           <div id="${chartId}_tip_val" style="color:${lc};font-size:13px;font-weight:500"></div>
           <div id="${chartId}_tip_raw" style="color:var(--muted);font-size:8px"></div>
         </div>
-        <input type="range" id="${chartId}_slider" min="0" max="${pts.length-1}" value="${pts.length-1}"
-          style="position:absolute;bottom:-2px;left:${(padL/chartW*100).toFixed(1)}%;width:${(iW/chartW*100).toFixed(1)}%;height:20px;opacity:0;cursor:crosshair;margin:0;padding:0;-webkit-appearance:none;z-index:5"
-          oninput="pcChartSlide('${chartId}',this.value)"
-          ontouchstart="pcChartSlide('${chartId}',this.value)"
-          onmouseenter="pcChartShow('${chartId}')"
-          onmouseleave="pcChartHide('${chartId}')">
+        <div id="${chartId}_overlay" style="position:absolute;top:0;left:0;right:0;bottom:0;cursor:crosshair;z-index:5;touch-action:none"
+          onmousedown="pcChartDragStart('${chartId}',event)"
+          onmousemove="pcChartDragMove('${chartId}',event)"
+          onmouseup="pcChartDragEnd('${chartId}')"
+          onmouseleave="pcChartDragEnd('${chartId}')"
+          ontouchstart="pcChartDragStart('${chartId}',event)"
+          ontouchmove="pcChartDragMove('${chartId}',event)"
+          ontouchend="pcChartDragEnd('${chartId}')"></div>
         <div id="${chartId}_store" style="display:none"
           data-pts='${JSON.stringify(pts.map(p => ({d:p.d, v:Math.round(p.v), r:p.raw})))}'
-          data-cfg='${JSON.stringify({padL,padR,padT,iW,iH,chartW,chartH,minV:parseFloat(minV.toFixed(1)),range:parseFloat(range.toFixed(1))})}'></div>
+          data-cfg='${JSON.stringify({padL,padR,padT,iW,iH,chartW,chartH,minV:parseFloat(minV.toFixed(1)),range:parseFloat(range.toFixed(1)),n:pts.length})}'></div>
       </div>
     </div>
   </div>`;
@@ -5112,7 +5106,6 @@ function buildPCValueHistorySection(name) {
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 function pcChartGetData(id) {
-  // Lazy-parse from data attributes and cache on the element
   const store = document.getElementById(id + '_store');
   if (!store) return null;
   if (!store._parsed) {
@@ -5126,12 +5119,26 @@ function pcChartGetData(id) {
   return store._parsed;
 }
 
-function pcChartSlide(id, idx) {
+function pcChartPosToIndex(id, clientX) {
+  const parsed = pcChartGetData(id);
+  if (!parsed) return -1;
+  const { data, cfg } = parsed;
+  const overlay = document.getElementById(id + '_overlay');
+  if (!overlay) return -1;
+  const rect = overlay.getBoundingClientRect();
+  // Convert clientX to fraction of chart width, then to data index
+  const frac = (clientX - rect.left) / rect.width;
+  // Map fraction to chart coordinate space, accounting for padL/padR
+  const chartFrac = (frac * cfg.chartW - cfg.padL) / cfg.iW;
+  const idx = Math.round(chartFrac * (data.length - 1));
+  return Math.max(0, Math.min(data.length - 1, idx));
+}
+
+function pcChartShowAtIndex(id, idx) {
   const parsed = pcChartGetData(id);
   if (!parsed) return;
   const { data, cfg } = parsed;
-  const i = parseInt(idx);
-  const pt = data[i];
+  const pt = data[idx];
   if (!pt) return;
 
   const cursor = document.getElementById(id + '_cursor');
@@ -5140,7 +5147,7 @@ function pcChartSlide(id, idx) {
   if (!cursor || !dot || !tip) return;
 
   const n = data.length - 1;
-  const x = cfg.padL + (i / Math.max(n, 1)) * cfg.iW;
+  const x = cfg.padL + (idx / Math.max(n, 1)) * cfg.iW;
   const y = cfg.padT + cfg.iH - ((pt.v - cfg.minV) / cfg.range) * cfg.iH;
 
   cursor.setAttribute('x1', x); cursor.setAttribute('x2', x); cursor.setAttribute('opacity', '0.5');
@@ -5154,25 +5161,47 @@ function pcChartSlide(id, idx) {
   document.getElementById(id + '_tip_val').textContent = pt.v.toLocaleString();
   document.getElementById(id + '_tip_raw').textContent = 'RAW: ' + pt.r.toLocaleString();
 
+  // Update change badge: from selected date to current (last data point)
+  const changeEl = document.getElementById(id + '_change');
+  if (changeEl) {
+    const curV = data[data.length - 1].v;
+    const diff = curV - pt.v;
+    const pct = pt.v > 0 ? ((diff / pt.v) * 100).toFixed(1) : '0';
+    const sign = diff >= 0 ? '+' : '';
+    const col = diff >= 0 ? 'var(--accent)' : 'var(--accent2)';
+    changeEl.style.color = col;
+    changeEl.textContent = `${sign}${Math.abs(diff).toLocaleString()} (${sign}${pct}%) since ${mon} ${parseInt(parts[2])}`;
+  }
+
   const pctX = x / cfg.chartW * 100;
   const pctY = y / cfg.chartH * 100;
   tip.style.display = 'block';
   if (pctX > 65) {
-    tip.style.left = 'auto';
-    tip.style.right = (100 - pctX + 2) + '%';
+    tip.style.left = 'auto'; tip.style.right = (100 - pctX + 2) + '%';
   } else {
-    tip.style.left = (pctX + 2) + '%';
-    tip.style.right = 'auto';
+    tip.style.left = (pctX + 2) + '%'; tip.style.right = 'auto';
   }
   tip.style.top = Math.max(0, pctY - 15) + '%';
 }
 
-function pcChartShow(id) {
-  const slider = document.getElementById(id + '_slider');
-  if (slider) pcChartSlide(id, slider.value);
+let _pcChartDragging = null;
+function pcChartDragStart(id, e) {
+  e.preventDefault();
+  _pcChartDragging = id;
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const idx = pcChartPosToIndex(id, clientX);
+  if (idx >= 0) pcChartShowAtIndex(id, idx);
 }
-
-function pcChartHide(id) {
+function pcChartDragMove(id, e) {
+  if (_pcChartDragging !== id) return;
+  e.preventDefault();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const idx = pcChartPosToIndex(id, clientX);
+  if (idx >= 0) pcChartShowAtIndex(id, idx);
+}
+function pcChartDragEnd(id) {
+  if (_pcChartDragging !== id) return;
+  _pcChartDragging = null;
   const cursor = document.getElementById(id + '_cursor');
   const dot = document.getElementById(id + '_dot');
   const tip = document.getElementById(id + '_tip');
@@ -5728,6 +5757,16 @@ async function syncAll() {
       steps.push('History ✓');
     } else { steps.push('History ✗'); }
   } catch(e) { steps.push('History ✗'); }
+
+  try {
+    const rrh = await fetch(PROXY + '/ktc-redraft-history', { signal: AbortSignal.timeout(30000) });
+    if (rrh.ok) {
+      const rdHist = await rrh.json();
+      localStorage.setItem('dynastyCalc_ktcRedraftHistory_v1', JSON.stringify(rdHist));
+      ktcRedraftHistory = rdHist; redraftHistoryLoaded = true;
+      steps.push('RD Hist ✓');
+    } else { steps.push('RD Hist ✗'); }
+  } catch(e) { steps.push('RD Hist ✗'); }
 
   try {
     const rp = await fetch(PROXY + '/player-stats', { signal: AbortSignal.timeout(30000) });

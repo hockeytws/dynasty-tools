@@ -964,6 +964,8 @@ async function backfillRedraftHistory() {
     }
 
     let playerCount = 0, skipped = 0;
+    const processedNames = new Set();
+    console.log(`  Redraft backfill: ${results.length} API entries, idToPlayer size=${Object.keys(idToPlayer).length}, rdIdToName size=${Object.keys(rdIdToName).length}`);
     for (const entry of results) {
       const id = String(entry.playerID);
       // Try redraft ID first, then dynasty ID, then name lookup
@@ -973,7 +975,16 @@ async function backfillRedraftHistory() {
       }
       if (!player) { skipped++; continue; }
 
+      // Skip if we already processed this player (API may return duplicates via different IDs)
+      if (processedNames.has(player.name)) continue;
+
       const hists = parseAllHistories(entry);
+
+      // Only process if this entry actually has data
+      if (hists.sf.length === 0 && hists.oneqb.length === 0 && hists.tep.length === 0 && hists.tep_1qb.length === 0) continue;
+
+      // Mark as processed
+      processedNames.add(player.name);
 
       // Debug first TE
       if (playerCount < 3 && player.position === 'TE' && hists.sf.length > 0) {
