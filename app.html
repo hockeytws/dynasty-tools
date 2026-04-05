@@ -5050,6 +5050,9 @@ function buildPCValueHistorySection(name) {
   const changeColor = changeAbs >= 0 ? 'var(--accent)' : 'var(--accent2)';
   const changeSign = changeAbs >= 0 ? '+' : '';
 
+  // Unique ID for this chart instance
+  const chartId = `pchist_${Date.now()%100000}`;
+
   return `<div class="pc-section" id="pc-hist-section">
     <div class="pc-section-title">${sectionTitle}</div>
     <div class="pc-chart-wrap">
@@ -5061,21 +5064,101 @@ function buildPCValueHistorySection(name) {
         <span style="color:var(--muted);font-size:8px">RAW: ${curRaw.toLocaleString()}</span>
         <span style="color:${changeColor}">${changeSign}${fmtV(changeAbs)} (${changeSign}${changePct}%)</span>
       </div>
-      <svg width="100%" viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="xMidYMid meet" style="display:block;overflow:visible">
-        <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${lc}" stop-opacity="0.18"/>
-          <stop offset="100%" stop-color="${lc}" stop-opacity="0.01"/>
-        </linearGradient></defs>
-        ${yGridLines.join('')}
-        ${xLabels.join('')}
-        ${yearLabel}
-        <path d="${areaD}" fill="url(#${gid})"/>
-        <path d="${pathD}" fill="none" stroke="${lc}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        <circle cx="${toX(pts.length-1).toFixed(1)}" cy="${toY(vals[vals.length-1]).toFixed(1)}" r="3.5" fill="${lc}"/>
-        <circle cx="${toX(0).toFixed(1)}" cy="${toY(vals[0]).toFixed(1)}" r="2.5" fill="${lc}" opacity="0.5"/>
-      </svg>
+      <div style="position:relative">
+        <svg id="${chartId}_svg" width="100%" viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="xMidYMid meet" style="display:block;overflow:visible">
+          <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${lc}" stop-opacity="0.18"/>
+            <stop offset="100%" stop-color="${lc}" stop-opacity="0.01"/>
+          </linearGradient></defs>
+          ${yGridLines.join('')}
+          ${xLabels.join('')}
+          ${yearLabel}
+          <path d="${areaD}" fill="url(#${gid})"/>
+          <path d="${pathD}" fill="none" stroke="${lc}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="${toX(pts.length-1).toFixed(1)}" cy="${toY(vals[vals.length-1]).toFixed(1)}" r="3.5" fill="${lc}"/>
+          <circle cx="${toX(0).toFixed(1)}" cy="${toY(vals[0]).toFixed(1)}" r="2.5" fill="${lc}" opacity="0.5"/>
+          <line id="${chartId}_cursor" x1="0" y1="${padT}" x2="0" y2="${padT+iH}" stroke="var(--text)" stroke-width="1" opacity="0" stroke-dasharray="3,2"/>
+          <circle id="${chartId}_dot" cx="0" cy="0" r="4" fill="${lc}" stroke="var(--surface)" stroke-width="1.5" opacity="0"/>
+        </svg>
+        <div id="${chartId}_tip" style="display:none;position:absolute;top:0;left:0;background:var(--surface);border:1px solid var(--border2);border-radius:6px;padding:5px 9px;font-family:'DM Mono',monospace;font-size:10px;pointer-events:none;z-index:10;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.4)">
+          <div id="${chartId}_tip_date" style="color:var(--muted);font-size:8px;letter-spacing:1px;margin-bottom:2px"></div>
+          <div id="${chartId}_tip_val" style="color:${lc};font-size:13px;font-weight:500"></div>
+          <div id="${chartId}_tip_raw" style="color:var(--muted);font-size:8px"></div>
+        </div>
+        <input type="range" id="${chartId}_slider" min="0" max="${pts.length-1}" value="${pts.length-1}"
+          style="position:absolute;bottom:-2px;left:${(padL/chartW*100).toFixed(1)}%;width:${(iW/chartW*100).toFixed(1)}%;height:20px;opacity:0;cursor:crosshair;margin:0;padding:0;-webkit-appearance:none;z-index:5"
+          oninput="pcChartSlide('${chartId}',this.value)"
+          ontouchstart="pcChartSlide('${chartId}',this.value)"
+          onmouseenter="pcChartShow('${chartId}')"
+          onmouseleave="pcChartHide('${chartId}')">
+      </div>
+      <script>
+        window['${chartId}_data'] = ${JSON.stringify(pts.map(p => ({d:p.d, v:Math.round(p.v), r:p.raw})))};
+        window['${chartId}_cfg'] = {padL:${padL},padR:${padR},padT:${padT},iW:${iW},iH:${iH},chartW:${chartW},chartH:${chartH},minV:${minV.toFixed(1)},range:${range.toFixed(1)}};
+      </script>
     </div>
   </div>`;
+}
+
+// Chart slider interaction
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function pcChartSlide(id, idx) {
+  const data = window[id + '_data'];
+  const cfg = window[id + '_cfg'];
+  if (!data || !cfg) return;
+  const i = parseInt(idx);
+  const pt = data[i];
+  if (!pt) return;
+
+  const svg = document.getElementById(id + '_svg');
+  const cursor = document.getElementById(id + '_cursor');
+  const dot = document.getElementById(id + '_dot');
+  const tip = document.getElementById(id + '_tip');
+  if (!svg || !cursor || !dot || !tip) return;
+
+  const n = data.length - 1;
+  const x = cfg.padL + (i / Math.max(n, 1)) * cfg.iW;
+  const y = cfg.padT + cfg.iH - ((pt.v - cfg.minV) / cfg.range) * cfg.iH;
+
+  cursor.setAttribute('x1', x); cursor.setAttribute('x2', x); cursor.setAttribute('opacity', '0.5');
+  dot.setAttribute('cx', x); dot.setAttribute('cy', y); dot.setAttribute('opacity', '1');
+
+  // Format date
+  const parts = pt.d.split('-');
+  const mon = MONTHS_SHORT[parseInt(parts[1]) - 1] || parts[1];
+  const dateStr = `${mon} ${parseInt(parts[2])}, ${parts[0]}`;
+
+  document.getElementById(id + '_tip_date').textContent = dateStr;
+  document.getElementById(id + '_tip_val').textContent = pt.v.toLocaleString();
+  document.getElementById(id + '_tip_raw').textContent = 'RAW: ' + pt.r.toLocaleString();
+
+  // Position tooltip — convert SVG coords to element %
+  const pctX = x / cfg.chartW * 100;
+  const pctY = y / cfg.chartH * 100;
+  tip.style.display = 'block';
+  // Flip tooltip to left side if near right edge
+  if (pctX > 65) {
+    tip.style.left = 'auto';
+    tip.style.right = (100 - pctX + 2) + '%';
+  } else {
+    tip.style.left = (pctX + 2) + '%';
+    tip.style.right = 'auto';
+  }
+  tip.style.top = Math.max(0, pctY - 15) + '%';
+}
+
+function pcChartShow(id) {
+  const slider = document.getElementById(id + '_slider');
+  if (slider) pcChartSlide(id, slider.value);
+}
+
+function pcChartHide(id) {
+  const cursor = document.getElementById(id + '_cursor');
+  const dot = document.getElementById(id + '_dot');
+  const tip = document.getElementById(id + '_tip');
+  if (cursor) cursor.setAttribute('opacity', '0');
+  if (dot) dot.setAttribute('opacity', '0');
+  if (tip) tip.style.display = 'none';
 }
 
 function buildPCScoringSection(name) {

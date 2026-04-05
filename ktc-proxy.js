@@ -789,7 +789,7 @@ async function backfillKTCHistory() {
   if (!cachedData || !cachedData.length) throw new Error('No cached players to backfill');
 
   backfillInProgress = true;
-  const players = cachedData.filter(p => p.position !== 'RDP' && p.name && p.id && !isNaN(Number(p.id)));
+  const players = cachedData.filter(p => p.name && p.id && !isNaN(Number(p.id)));
   backfillProgress = { done: 0, total: players.length, status: 'running' };
 
   const idToPlayer = {};
@@ -938,22 +938,49 @@ async function backfillRedraftHistory() {
     const results = await ktcRedraftHistoriesPost();
     if (!Array.isArray(results)) throw new Error('Unexpected response shape');
 
-    // Build ID → player name lookup from cached redraft data
-    const idToName = {};
+    // Build ID → player lookup. Redraft IDs differ from dynasty IDs,
+    // so we need both caches plus a name-based fallback.
+    const idToPlayer = {};
+    const nameToPlayer = {};
     if (redraftData) {
-      redraftData.forEach(p => { if (p.id && p.name) idToName[String(p.id)] = p; });
+      redraftData.forEach(p => {
+        if (p.id && p.name) idToPlayer[String(p.id)] = p;
+        if (p.name) nameToPlayer[p.name.toLowerCase()] = p;
+      });
     }
-    // Also use dynasty cache for name/pos lookup
     if (cachedData) {
-      cachedData.forEach(p => { if (p.id && p.name && !idToName[String(p.id)]) idToName[String(p.id)] = p; });
+      cachedData.forEach(p => {
+        if (p.id && p.name && !idToPlayer[String(p.id)]) idToPlayer[String(p.id)] = p;
+        if (p.name && !nameToPlayer[p.name.toLowerCase()]) nameToPlayer[p.name.toLowerCase()] = p;
+      });
     }
 
-    let playerCount = 0;
+    // The redraft API returns all players — we need to map their IDs to names.
+    // Since redraft uses different IDs than dynasty, we build a reverse lookup
+    // from the redraft cache: redraft playerID → player name
+    const rdIdToName = {};
+    if (redraftData) {
+      redraftData.forEach(p => { if (p.id && p.name) rdIdToName[String(p.id)] = p.name; });
+    }
+
+    let playerCount = 0, skipped = 0;
     for (const entry of results) {
-      const player = idToName[String(entry.playerID)];
-      if (!player) continue;
+      const id = String(entry.playerID);
+      // Try redraft ID first, then dynasty ID, then name lookup
+      let player = idToPlayer[id];
+      if (!player && rdIdToName[id]) {
+        player = nameToPlayer[rdIdToName[id].toLowerCase()];
+      }
+      if (!player) { skipped++; continue; }
 
       const hists = parseAllHistories(entry);
+
+      // Debug first TE
+      if (playerCount < 3 && player.position === 'TE' && hists.sf.length > 0) {
+        console.log(`  Redraft TEP DEBUG: ${player.name} — sf:${hists.sf.length} tep:${hists.tep.length}`);
+        if (hists.sf.length) console.log(`    SF sample: ${hists.sf[0].dateStr} = ${hists.sf[0].value}`);
+      }
+
       const maps = {};
       for (const [key, arr] of Object.entries(hists)) {
         maps[key] = {};
@@ -986,7 +1013,16 @@ async function backfillRedraftHistory() {
     }
 
     saveRedraftHistory();
-    console.log(`Redraft backfill complete: ${Object.keys(ktcRedraftHistory).length} dates, ${playerCount} players`);
+    console.log(`Redraft backfill complete: ${Object.keys(ktcRedraftHistory).length} dates, ${playerCount} players (${skipped} unmatched IDs)`);
+
+    // Verify
+    const dates = Object.keys(ktcRedraftHistory).sort();
+    if (dates.length > 0) {
+      const snap = ktcRedraftHistory[dates[Math.floor(dates.length/2)]];
+      const sample = Object.entries(snap).find(([n,d]) => d.value > 0);
+      if (sample) console.log(`  Redraft verified: ${sample[0]} — SF=${sample[1].value} TEP=${sample[1].tep}`);
+      else console.warn('  Redraft WARNING: all SF values are 0');
+    }
   } catch(err) {
     console.error('Redraft backfill failed:', err.message);
   }
