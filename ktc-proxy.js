@@ -52,6 +52,7 @@ if (fs.existsSync(PLAYER_STATS_FILE)) {
     playerStats = JSON.parse(fs.readFileSync(PLAYER_STATS_FILE, 'utf8'));
     console.log(`Player stats: ${Object.keys(playerStats).length} players`);
   } catch(e) { console.log('Player stats load failed:', e.message); }
+}
 
 // ── Team history ─────────────────────────────────────────────────────────────
 let teamHistory = {};
@@ -64,8 +65,6 @@ if (fs.existsSync(TEAM_HISTORY_FILE)) {
 function saveTeamHistory() {
   try { fs.writeFileSync(TEAM_HISTORY_FILE, JSON.stringify(teamHistory)); }
   catch(e) { console.error('saveTeamHistory failed:', e.message); }
-}
-
 }
 
 function saveHistory() {
