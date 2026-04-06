@@ -195,11 +195,14 @@ All player valuation routes through a single registry rather than hardcoded KTC 
 - `renderValueSourceSelector()` — renders pill buttons into `#value-source-selector` in Config tab
 
 ### Name Matching
-FFPC and KTC name formats diverge. Handled by:
-- `normalizeName(n)` — strips suffixes (Jr/Sr/II/III/IV), periods, extra spaces
-- `PLAYER_ALIASES` map — e.g. `'chig okonkwo' → 'chigoziem okonkwo'`
-- `getKTCPlayer(name)` — tries direct map, then normalized map, then partial match
+FFPC, KTC, and Player Profiler name formats diverge. Handled by:
+- `normalizeName(n)` — strips suffixes (Jr/Sr/II/III/IV), periods, apostrophes, extra spaces
+- `PLAYER_ALIASES` map — maps normalized nickname variants to a single canonical form (e.g. `'gabe davis' → 'gabriel davis'`, `'chig okonkwo' → 'chigoziem okonkwo'`, `'josh jacobs' → 'joshua jacobs'`). Both directions map to the same canonical so either source's name resolves.
+- `getKTCPlayer(name)` — tries direct map, then normalized map with alias resolution
+- `getPlayerStats(name)` — tries exact `playerStats[name]`, then builds normalized map (`_psNormMap`) with alias resolution. Mirrors `getKTCPlayer` pattern. `invalidatePSNormMap()` called on stats reload.
+- `resolveHistoryName(name)` — resolves name to KTC canonical name via `getKTCPlayer` for `ktcHistory`/`ktcRedraftHistory` lookups (history snapshots are keyed by KTC `p.name`)
 - Rostered set built AFTER KTC lookup to avoid FA false-positives
+- **When a new name mismatch is found:** add a bidirectional entry to `PLAYER_ALIASES` (both nickname and full name mapping to the same canonical form)
 
 ### Key Functions
 - `adjVal(name, pos, ligId)` — adjusted dynasty value using per-league params
@@ -212,6 +215,8 @@ FFPC and KTC name formats diverge. Handled by:
 - `buildPCScoringSection(name)` — renders PPG bar charts + game-by-game breakdown
 - `loadKtcHistory()` / `loadKtcRedraftHistory()` / `loadPlayerStats()` / `loadTeamHistory()` — load from proxy or cache
 - `getCareerPPG(name)` — weighted average PPG across all seasons (used for PROFILES default sort)
+- `getPlayerStats(name)` — normalized lookup into `playerStats` with alias resolution (handles KTC↔Player Profiler name mismatches)
+- `resolveHistoryName(name)` — resolves to KTC canonical name for history snapshot lookups
 
 ---
 
@@ -549,7 +554,7 @@ Run after ANY change to `index.html`. Then push `app.html` + `sw-app.js` to GitH
 - **Date format with year:** Player card value history X-axis: `Oct 8 '25`. Team card chart: same. Transaction dates: `Apr 5, 2026`. Slider tooltip: `Oct 8, 2025`.
 - **Format switching freeze fix:** `_pcHistUpdating` boolean lock prevents rapid clicks from queuing renders.
 - **Value source architecture** — `getRawValue()` dispatches through `getActiveSource().getRaw()`. `getRawKTC()` is pinned to KTC source.
-- **FFPC + KTC name divergence** — suffix stripping + `PLAYER_ALIASES` map; rostered set built after KTC lookup.
+- **Cross-source name resolution** — KTC, FFPC, and Player Profiler all use different name formats. `normalizeName()` handles suffixes/periods/apostrophes. `PLAYER_ALIASES` handles nickname divergences (Gabe↔Gabriel, Josh↔Joshua, etc.). `getKTCPlayer()` and `getPlayerStats()` both route through normalized+alias lookup. `resolveHistoryName()` resolves to KTC canonical name for history snapshot keys. When a new mismatch is found, add a bidirectional entry to `PLAYER_ALIASES`.
 - **Pick slot projection** — uses redraft ranking + dynasty value composite to estimate Early/Mid/Late, then interpolates KTC tier anchor values. Mid-round estimates (slot 6.5) preferred over slot projections.
 - **iOS PWA header** — `viewport-fit=cover` + `padding-top: env(safe-area-inset-top)` on `.page-tabs`.
 - **app.html config is default tab** — `view-config` has `active` class in static HTML.
