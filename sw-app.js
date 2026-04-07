@@ -1,6 +1,6 @@
 // Dynasty Tools iOS PWA — Service Worker
 // Registered at ./sw-app.js so scope is /dynasty-tools/
-const CACHE = 'dynasty-app-v68';
+const CACHE = 'dynasty-app-v69';
 
 // Pre-cache the app shell on install
 const SHELL = [
