@@ -1275,7 +1275,7 @@ function adjRedraftValue(name, pos, tepOverride, sfOverride) {
 
 // ── Load redraft players ──────────────────────────────────────────────────────
 async function loadRedraftPlayers() {
-  const r = await fetch(`/public-data/ktc-redraft.json`);
+  const r = await fetch(`./public-data/ktc-redraft.json`);
   if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.error||'Proxy error'); }
   const json = await r.json();
   redraftPlayers = (json.data||[]).filter(p => (p.sf||0) > 0 || (p.oneqb||0) > 0);
@@ -1620,7 +1620,7 @@ function lLoadKTCFromStorage() {
 }
 
 async function loadPlayers() {
-  const r = await fetch(`/public-data/ktc.json`);
+  const r = await fetch(`./public-data/ktc.json`);
   if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.error||'Proxy error'); }
   const json = await r.json();
   allPlayers = (json.data||[]).filter(p => p.value > 0).sort((a,b) => b.value - a.value);
@@ -2050,7 +2050,7 @@ function lLoadLeagueDataFromStorage() {
 async function lFetchAllLeagues() {
   let any = false;
   try {
-    const r = await fetch(`/public-data/ffpc.json`);
+    const r = await fetch(`./public-data/ffpc.json`);
     if (!r.ok) return false;
     const allFFPC = await r.json();
     for (const l of L_LEAGUES) {
@@ -4648,7 +4648,7 @@ async function loadTeamHistory() {
   } catch(e) {}
   // Fetch from proxy
   try {
-    const r = await fetch(`/public-data/team-history.json`);
+    const r = await fetch(`./public-data/team-history.json`);
     if (r.ok) {
       teamHistory = await r.json();
       teamHistoryLoaded = true;
@@ -4667,7 +4667,7 @@ const PLAYER_STATS_LS_KEY = 'dynastyCalc_playerStats_v1';
 
 async function loadKtcHistory() {
   try {
-    const r = await fetch(`/public-data/ktc-history.json`);
+    const r = await fetch(`./public-data/ktc-history.json`);
     if (r.ok) {
       ktcHistory = await r.json();
       try { localStorage.setItem(KTC_HISTORY_LS_KEY, JSON.stringify(ktcHistory)); } catch(e) {}
@@ -4682,7 +4682,7 @@ async function loadKtcHistory() {
 
 async function loadKtcRedraftHistory() {
   try {
-    const r = await fetch(`/public-data/ktc-redraft-history.json`);
+    const r = await fetch(`./public-data/ktc-redraft-history.json`);
     if (r.ok) {
       ktcRedraftHistory = await r.json();
       try { localStorage.setItem(KTC_RD_HISTORY_LS_KEY, JSON.stringify(ktcRedraftHistory)); } catch(e) {}
@@ -4697,7 +4697,7 @@ async function loadKtcRedraftHistory() {
 
 async function loadPlayerStats() {
   try {
-    const r = await fetch(`/public-data/player-stats.json`);
+    const r = await fetch(`./public-data/player-stats.json`);
     if (r.ok) {
       playerStats = await r.json();
       invalidatePSNormMap();
