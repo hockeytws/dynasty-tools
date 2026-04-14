@@ -2186,7 +2186,7 @@ function lTeamsWithValues(ligId) {
     });
 
     return { ...t, total, posVals, rdTotal, rdPosVals, parsedPicks };
-  }).sort((a,b) => b.total - a.total);
+  });
 
   // Second pass: replace future pick values with projected interpolated values
   // Project rounds 1-4. Use the ORIGINATING team's slot (pick.from = original team name).
@@ -2246,6 +2246,8 @@ function lTeamsWithValues(ligId) {
     t.posVals.PICKS = newPickTotal;
     t.total = Object.values(t.posVals).reduce((s,v) => s+v, 0);
   });
+
+  teams.sort((a,b) => b.total - a.total);
 
   return teams;
 }
