@@ -42,6 +42,9 @@ dn-jwt-from-edge.js
 # ── Local-only (app.html is the deployable PWA version) ───────────────────────
 index.html
 
+# ── Public data exports (large, regenerated — served locally only) ────────────
+public-data/
+
 # ── Node / logs ───────────────────────────────────────────────────────────────
 node_modules/
 *.log

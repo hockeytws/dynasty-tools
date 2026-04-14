@@ -26,21 +26,36 @@ else
   echo "[$(date)] KTC proxy already running on :3001" >> "$LOG_DIR/startup.log"
 fi
 
+SERVE_BIN="$HOME/.npm-global/bin/serve"
+if [ ! -f "$SERVE_BIN" ]; then
+  SERVE_BIN="$(which serve 2>/dev/null)"
+fi
+
 if ! ss -tlnp 2>/dev/null | grep -q ':3000'; then
-  pkill -f "serve " 2>/dev/null; sleep 1
-  SERVE_BIN="$HOME/.npm-global/bin/serve"
-  if [ ! -f "$SERVE_BIN" ]; then
-    SERVE_BIN="$(which serve 2>/dev/null)"
-  fi
+  pkill -f "serve.*3000" 2>/dev/null; sleep 1
   if [ -z "$SERVE_BIN" ]; then
-    echo "[$(date)] WARN: serve not found, skipping file server" >> "$LOG_DIR/startup.log"
+    echo "[$(date)] WARN: serve not found, skipping file server :3000" >> "$LOG_DIR/startup.log"
   else
     nohup "$SERVE_BIN" "$LOG_DIR" -p 3000 >> "$LOG_DIR/serve.log" 2>&1 &
     disown $!
-    echo "[$(date)] File server started, PID: $!" >> "$LOG_DIR/startup.log"
+    echo "[$(date)] File server started on :3000, PID: $!" >> "$LOG_DIR/startup.log"
   fi
 else
   echo "[$(date)] File server already running on :3000" >> "$LOG_DIR/startup.log"
+fi
+
+# ── Public file server (port 3002) — served via Tailscale Funnel ─────────────
+if ! ss -tlnp 2>/dev/null | grep -q ':3002'; then
+  pkill -f "serve.*3002" 2>/dev/null; sleep 1
+  if [ -z "$SERVE_BIN" ]; then
+    echo "[$(date)] WARN: serve not found, skipping public file server :3002" >> "$LOG_DIR/startup.log"
+  else
+    nohup "$SERVE_BIN" "$LOG_DIR" -p 3002 >> "$LOG_DIR/serve-public.log" 2>&1 &
+    disown $!
+    echo "[$(date)] Public file server started on :3002, PID: $!" >> "$LOG_DIR/startup.log"
+  fi
+else
+  echo "[$(date)] Public file server already running on :3002" >> "$LOG_DIR/startup.log"
 fi
 
 echo "[$(date)] start-services.sh complete — entering sleep to keep WSL alive" >> "$LOG_DIR/startup.log"

@@ -125,6 +125,9 @@ dn-jwt-from-edge.js
 # ── Local-only (app.html is the deployable PWA version) ───────────────────────
 index.html
 
+# ── Public data exports (large, regenerated — served locally only) ────────────
+public-data/
+
 # ── Node / logs ───────────────────────────────────────────────────────────────
 node_modules/
 *.log
@@ -152,6 +155,15 @@ else
   ok "app.html built"
 fi
 
+# ── Step 3b: Export public data ───────────────────────────────────────────────
+hdr "3b. Export public data"
+if [ ! -f "export-public-data.js" ]; then
+  warn "export-public-data.js not found — skipping"
+else
+  node export-public-data.js
+  ok "public-data/ updated"
+fi
+
 # ── Step 4: Git add, commit, push ─────────────────────────────────────────────
 hdr "4. Git commit & push"
 
@@ -174,6 +186,8 @@ TRACK=(
   "build-player-stats.js"
   "ktc-history-post.js"
   "ktc-find-player-url.js"
+  "export-public-data.js"
+  "public.html"
   "PROJECT_CONTEXT.md"
 )
 

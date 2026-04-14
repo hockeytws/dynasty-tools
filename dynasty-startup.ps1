@@ -2,7 +2,7 @@
 # Runs at boot via Task Scheduler (as SYSTEM, Highest privilege)
 # Calls start-services.sh in WSL to launch both Node services
 
-$ports = @(3000, 3001)
+$ports = @(3000, 3001, 3002)
 
 function Get-WslIp {
     try {
@@ -78,13 +78,14 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
 
     $p3000 = Test-Port -port 3000
     $p3001 = Test-Port -port 3001
+    $p3002 = Test-Port -port 3002
 
-    if ($p3000 -and $p3001) {
-        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Dynasty Calc is live at http://100.85.44.43:3000"
+    if ($p3000 -and $p3001 -and $p3002) {
+        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Dynasty Calc is live. Private: http://100.85.44.43:3000 | Public: http://100.85.44.43:3002"
         exit 0
     }
 
-    Write-Host "  Port check: 3000=$p3000, 3001=$p3001. Not ready yet."
+    Write-Host "  Port check: 3000=$p3000, 3001=$p3001, 3002=$p3002. Not ready yet."
     if ($attempt -lt $maxAttempts) {
         Write-Host "  Retrying in ${retryDelay}s..."
         $end = (Get-Date).AddSeconds($retryDelay)
