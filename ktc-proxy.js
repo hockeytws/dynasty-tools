@@ -2302,7 +2302,9 @@ async function dynastyNerdsLookup(email) {
         'Referer': 'https://app.dynastynerds.com/',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
       },
-      timeout: 20000,
+      // Heavy scouters (hundreds of teams) need much longer than the default 20s
+      // for DN to enumerate all leagues into the add-account response payload.
+      timeout: 90000,
     };
     const reqHttp = https.request(options, (r) => {
       let data = '';
