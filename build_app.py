@@ -131,6 +131,8 @@ js = replace_fn_body(js, 'async function lSyncLeagues()',
     '  alert("Use SYNC button to refresh leagues."); return;')
 js = replace_fn_body(js, 'async function scoutLookup()',
     '  alert("Scouting not available in offline app."); return;')
+js = replace_fn_body(js, 'async function triggerProjScrape()',
+    '  alert("Projections refresh requires the proxy. Use SYNC on the home PC."); return;')
 
 js = replace_fn_body(js, 'async function triggerBackfill()',
     '  alert("Backfill requires proxy connection. Connect Tailscale and use the local app."); return;')
@@ -217,6 +219,7 @@ js = replace_fn_body(js, 'async function init()',
   try { await loadKtcRedraftHistory(); } catch(e) {}
   try { await loadPlayerStats(); } catch(e) {}
   try { await loadTeamHistory(); } catch(e) {}
+  try { await loadProjections(); } catch(e) {}
   await lLoadAllLeagues();
   renderConfigOverrides();
   renderValueSourceSelector();

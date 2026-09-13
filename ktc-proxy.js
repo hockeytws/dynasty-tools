@@ -4,6 +4,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
+const { scrapeProjections } = require('./fdstudio-projections.js');
 
 // ── TLS cert ──────────────────────────────────────────────────────────────────
 let tlsOptions = null;
@@ -31,6 +32,30 @@ const LEAGUEMATES_FILE    = path.join(__dirname, 'leaguemates.json');
 const HISTORY_FILE        = path.join(__dirname, 'ktc-history.json');
 const REDRAFT_HISTORY_FILE = path.join(__dirname, 'ktc-redraft-history.json');
 const PLAYER_STATS_FILE   = path.join(__dirname, 'player-stats.json');
+const PROJECTIONS_FILE    = path.join(__dirname, 'projections.json');
+
+// ── Weekly projections (firstdown.studio) ────────────────────────────────────
+let projCache = null;
+let projScrapeState = { running: false, startedAt: null, error: null, count: 0 };
+try { projCache = JSON.parse(fs.readFileSync(PROJECTIONS_FILE, 'utf8')); } catch(e) {}
+
+async function refreshProjections() {
+  if (projScrapeState.running) return projScrapeState;
+  projScrapeState = { running: true, startedAt: new Date().toISOString(), error: null, count: 0 };
+  try {
+    const data = await scrapeProjections();
+    if (!data.count) throw new Error('0 players parsed' + (data.errors.length ? ' — ' + data.errors.join('; ') : ''));
+    fs.writeFileSync(PROJECTIONS_FILE, JSON.stringify(data));
+    projCache = data;
+    projScrapeState = { running: false, startedAt: projScrapeState.startedAt, error: null, count: data.count };
+    console.log(`[proj] week ${data.week} — ${data.count} players (${data.updated || 'no date'})`);
+  } catch (e) {
+    // Keep serving the last good cache on failure.
+    projScrapeState = { running: false, startedAt: projScrapeState.startedAt, error: e.message, count: 0 };
+    console.error('[proj] FAILED:', e.message);
+  }
+  return projScrapeState;
+}
 const TEAM_HISTORY_FILE   = path.join(__dirname, 'team-history.json');
 
 // ── KTC value history ─────────────────────────────────────────────────────────
@@ -1280,6 +1305,26 @@ const requestHandler = async (req, res) => {
   }
 
   // GET /player-stats — return player profiler stats
+  // ── Weekly projections ──────────────────────────────────────────────────────
+  if (req.method === 'GET' && url === '/projections') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(projCache || { error: 'No projections cached', players: {} }));
+    return;
+  }
+
+  if (req.method === 'POST' && url === '/scrape-projections') {
+    refreshProjections();
+    res.writeHead(202, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ started: true }));
+    return;
+  }
+
+  if (req.method === 'GET' && url === '/scrape-projections-status') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(projScrapeState));
+    return;
+  }
+
   if (req.method === 'GET' && url === '/player-stats') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(playerStats));
@@ -1346,6 +1391,9 @@ const requestHandler = async (req, res) => {
       ffpcLeagues: Object.keys(ffpcCache),
       historyDays: Object.keys(ktcHistory).length,
       teamHistoryLeagues: Object.keys(teamHistory).length,
+      projWeek: projCache ? projCache.week : null,
+      projCount: projCache ? projCache.count : 0,
+      projUpdated: projCache ? projCache.updated : null,
     }));
     return;
   }
@@ -2302,9 +2350,7 @@ async function dynastyNerdsLookup(email) {
         'Referer': 'https://app.dynastynerds.com/',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
       },
-      // Heavy scouters (hundreds of teams) need much longer than the default 20s
-      // for DN to enumerate all leagues into the add-account response payload.
-      timeout: 90000,
+      timeout: 20000,
     };
     const reqHttp = https.request(options, (r) => {
       let data = '';
@@ -2346,7 +2392,7 @@ const finalHandler = async (req, res) => {
 };
 
 // ── Startup: fill any missed history snapshots + start daily scheduler ────────
-const PROXY_VERSION = '2026-04-05.1';  // Bump this on every deploy
+const PROXY_VERSION = '2026-09-13.1';  // Bump this on every deploy
 console.log(`Dynasty Tools Proxy v${PROXY_VERSION}`);
 
 if (cachedData && cachedData.length) {
@@ -2375,6 +2421,14 @@ if (cachedData && cachedData.length && Object.keys(ffpcCache).length) {
 }
 scheduleDailySnapshot();
 
+// ── Weekly projections refresh ────────────────────────────────────────────────
+// Lines move all week; hourly on game days (Thu/Sat/Sun/Mon), once daily otherwise.
+refreshProjections();
+setInterval(() => {
+  const d = new Date();
+  if ([0, 1, 4, 6].includes(d.getDay()) || d.getHours() === 9) refreshProjections();
+}, 60 * 60 * 1000);
+
 const server = tlsOptions
   ? https.createServer(tlsOptions, finalHandler)
   : http.createServer(finalHandler);
@@ -2387,6 +2441,7 @@ server.listen(3001, () => {
   console.log('  KTC history:  GET /ktc-history, POST /ktc-history/snapshot, POST /ktc-history/backfill');
   console.log('  Team history: GET /team-history, POST /team-history/snapshot');
   console.log('  Player stats: GET /player-stats');
+  console.log('  Projections:  GET /projections, POST /scrape-projections, GET /scrape-projections-status');
   console.log('  FFPC: GET /ffpc, POST /ffpc/:leagueId, GET /ffpc/:leagueId');
   console.log('  Scout: GET /scout-lookup?email=...');
 });

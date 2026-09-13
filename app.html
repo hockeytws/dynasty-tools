@@ -403,6 +403,24 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 .rnav-sub-row{display:flex;gap:5px;flex-wrap:wrap;}
 .rnav-sub{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:1px;padding:4px 12px;border-radius:5px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;transition:all 0.15s;opacity:0.5;}
 .rnav-sub.active{opacity:1;border-color:var(--accent3);color:var(--accent3);background:rgba(255,209,102,0.08);}
+.wk-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);}
+.wk-row:hover{background:var(--surface2);}
+.wk-num{font-family:'Bebas Neue',sans-serif;font-size:15px;color:var(--muted);min-width:26px;text-align:right;}
+.wk-pos{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:1px;min-width:24px;}
+.wk-info{flex:1;min-width:0;}
+.wk-name{font-family:'DM Sans',sans-serif;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wk-sub{font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px;}
+.wk-pts{font-family:'Bebas Neue',sans-serif;font-size:20px;color:var(--accent);min-width:52px;text-align:right;}
+.wk-own{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:0.5px;padding:1px 5px;border-radius:3px;border:1px solid var(--border2);color:var(--muted);margin-left:6px;}
+.wk-own.mine{border-color:var(--accent);color:var(--accent);}
+.wk-own.fa{border-color:var(--accent3);color:var(--accent3);}
+.wk-inj{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:0.5px;padding:1px 4px;border-radius:3px;border:1px solid var(--accent2);color:var(--accent2);margin-left:5px;}
+.lu-slot{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);}
+.lu-slot.sf{background:rgba(0,191,255,0.05);}
+.lu-slot.flex{background:rgba(192,132,252,0.05);}
+.lu-lbl{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:1px;color:var(--muted);min-width:72px;}
+.lu-total{font-family:'Bebas Neue',sans-serif;font-size:30px;color:var(--accent);}
+.lu-empty{color:var(--accent2);font-family:'DM Mono',monospace;font-size:11px;padding:8px 12px;}
 /* Config info strip */
 .rankings-cfg-strip{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 12px;display:flex;flex-wrap:wrap;gap:6px 14px;}
 .rankings-cfg-item{font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;}
@@ -693,6 +711,16 @@ body{
             <span class="sync-status-txt" id="cfg-playermap-status">—</span>
           </div>
         </div>
+        <div class="config-card">
+          <div class="config-label">Weekly Projections</div>
+          <div class="config-hint" style="font-size:10px;">Vegas props via firstdown.studio, re-scored to FFPC.</div>
+          <div class="sync-league-row">
+            <button class="btn-ghost" id="cfg-proj-btn" onclick="triggerProjScrape()">
+              <span id="cfg-proj-icon">↻</span> SYNC PROJECTIONS
+            </button>
+            <span class="sync-status-txt" id="cfg-proj-status">—</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -893,6 +921,7 @@ body{
       <button class="snav" data-s="redraft" onclick="setSection('redraft')">REDRAFT</button>
       <button class="snav" data-s="positions" onclick="setSection('positions')">BY POSITION</button>
       <button class="snav" data-s="rosters" onclick="setSection('rosters')">ROSTERS</button>
+      <button class="snav" data-s="lineups" onclick="setSection('lineups')">LINEUPS</button>
       <button class="snav" data-s="picks" onclick="setSection('picks')">PICKS</button>
       <button class="snav" data-s="tradecalc" onclick="setSection('tradecalc')">TRADE CALC</button>
       <button class="snav" data-s="tradelog" onclick="setSection('tradelog')">TRADE LOG</button>
@@ -990,6 +1019,7 @@ body{
       <button class="rnav active" id="rsub-players" onclick="setRankingsSubtab('players')">DYNASTY</button>
       <button class="rnav" id="rsub-redraft" onclick="setRankingsSubtab('redraft')">REDRAFT</button>
       <button class="rnav" id="rsub-picks" onclick="setRankingsSubtab('picks')">PICKS</button>
+      <button class="rnav" id="rsub-weekly" onclick="setRankingsSubtab('weekly')">WEEKLY</button>
     </div>
     <!-- Sub-filter row (position or year) — rendered by JS into this slot -->
     <div id="rankings-subfilter" style="margin-top:8px;"></div>
@@ -2148,6 +2178,7 @@ function renderLeagues() {
     case 'redraft':   el.innerHTML = renderRedraftRankings(); break;
     case 'positions': el.innerHTML = renderPositions(); break;
     case 'rosters':   el.innerHTML = renderRosters(); break;
+    case 'lineups':   el.innerHTML = renderLineups(); break;
     case 'picks':     el.innerHTML = renderPicks(); break;
     case 'tradecalc': el.innerHTML = renderLeagueTradeCalc(); break;
     case 'tradelog':  el.innerHTML = renderTradeLog(); break;
@@ -2186,7 +2217,7 @@ function lTeamsWithValues(ligId) {
     });
 
     return { ...t, total, posVals, rdTotal, rdPosVals, parsedPicks };
-  });
+  }).sort((a,b) => b.total - a.total);
 
   // Second pass: replace future pick values with projected interpolated values
   // Project rounds 1-4. Use the ORIGINATING team's slot (pick.from = original team name).
@@ -2246,8 +2277,6 @@ function lTeamsWithValues(ligId) {
     t.posVals.PICKS = newPickTotal;
     t.total = Object.values(t.posVals).reduce((s,v) => s+v, 0);
   });
-
-  teams.sort((a,b) => b.total - a.total);
 
   return teams;
 }
@@ -2805,7 +2834,7 @@ function lUpdateTradeBar() {
 // RANKINGS TAB (PLAYERS + PICKS subtabs)
 // ════════════════════════════════════════════════════════════════════════════
 let rankFilter = 'ALL';
-let rankingsSubtab = 'players'; // 'players' | 'redraft' | 'picks'
+let rankingsSubtab = 'players'; // 'players' | 'redraft' | 'picks' | 'weekly'
 let rankFilterDyn = 'ALL';
 let rankFilterRd  = 'ALL';
 let picksTabYearFilter = 'ALL';
@@ -2827,6 +2856,13 @@ function setRankingsSubtab(sub) {
 function renderRankingsSubfilter() {
   const el = document.getElementById('rankings-subfilter');
   if (!el) return;
+  if (rankingsSubtab === 'weekly') {
+    const btns = ['ALL','QB','RB','WR','TE'].map(f =>
+      `<button class="rnav-sub ${rankFilterWk===f?'active':''}" onclick="setRankFilterWk('${f}')">${f}</button>`
+    ).join('');
+    el.innerHTML = `<div class="rnav-sub-row">${btns}</div>`;
+    return;
+  }
   if (rankingsSubtab === 'players') {
     const btns = ['ALL','QB','RB','WR','TE'].map(f =>
       `<button class="rnav-sub ${rankFilterDyn===f?'active':''}" onclick="setRankFilter('${f}')">${f}</button>`
@@ -2851,6 +2887,7 @@ function renderRankingsSubfilter() {
 function renderRankingsConfigStrip() {
   const el = document.getElementById('rankings-config-strip');
   if (!el) return;
+  if (rankingsSubtab === 'weekly') { el.innerHTML = renderWeeklyConfigStrip(); return; }
   const isDyn = rankingsSubtab !== 'redraft';
   const fmt = 'SF · TE+';
   if (rankingsSubtab === 'picks') {
@@ -2887,6 +2924,8 @@ function renderRankingsTab() {
 
   renderRankingsSubfilter();
   renderRankingsConfigStrip();
+
+  if (rankingsSubtab === 'weekly') { el.innerHTML = renderRankingsWeeklyView(); return; }
 
   if (!ktcPlayers.length) {
     el.innerHTML = `<div class="empty-state">KTC data not loaded yet.<br>Go to <strong>CONFIG</strong> and refresh KTC values first.</div>`;
@@ -4506,6 +4545,7 @@ async function init() {
   try { await loadKtcRedraftHistory(); } catch(e) {}
   try { await loadPlayerStats(); } catch(e) {}
   try { await loadTeamHistory(); } catch(e) {}
+  try { await loadProjections(); } catch(e) {}
   await lLoadAllLeagues();
   renderConfigOverrides();
   renderValueSourceSelector();
@@ -4570,6 +4610,272 @@ async function loadPlayerStats() {
     const data = await dbGet('playerStats');
     if (data) { playerStats = data; invalidatePSNormMap(); statsLoaded = true; }
   } catch(e) {}
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// WEEKLY PROJECTIONS (firstdown.studio Vegas props, re-scored to FFPC TriFlex)
+// ════════════════════════════════════════════════════════════════════════════
+const PROJ_LS_KEY = 'dynastyCalc_projections_v1';
+let projections = null;
+let projLoaded = false;
+let rankFilterWk = 'ALL';
+
+// Same key the scraper writes: normalizeName() + PLAYER_ALIASES.
+function projKey(name) {
+  const norm = normalizeName(name);
+  return PLAYER_ALIASES[norm] || norm;
+}
+
+function getProj(name) {
+  if (!projections || !projections.players) return null;
+  return projections.players[projKey(name)] || null;
+}
+
+async function loadProjections() {
+  try {
+    const r = await fetch(`${PROXY}/projections`);
+    if (r.ok) {
+      const d = await r.json();
+      if (d && d.players && Object.keys(d.players).length) {
+        projections = d;
+        try { localStorage.setItem(PROJ_LS_KEY, JSON.stringify(d)); } catch(e) {}
+        projLoaded = true;
+        return;
+      }
+    }
+  } catch(e) {}
+  try {
+    const raw = localStorage.getItem(PROJ_LS_KEY);
+    if (raw) { projections = JSON.parse(raw); projLoaded = true; }
+  } catch(e) {}
+}
+
+async function triggerProjScrape() {
+  alert("Projections refresh requires the proxy. Use SYNC on the home PC."); return;
+}
+
+function updateProjStatus() {
+  const st = document.getElementById('cfg-proj-status');
+  if (!st) return;
+  st.textContent = projections
+    ? `wk ${projections.week} · ${projections.count} players · ${projections.updated || '?'}`
+    : 'not loaded';
+}
+
+function setRankFilterWk(f) { rankFilterWk = f; renderRankingsTab(); }
+
+function renderWeeklyConfigStrip() {
+  if (!projections) return '';
+  return `<div class="rankings-cfg-strip">
+    <div class="rankings-cfg-item">WEEK <span>${projections.season || ''} ${projections.week == null ? '—' : 'W' + projections.week}</span></div>
+    <div class="rankings-cfg-item">SCORING <span>PPR · TE 1.5</span></div>
+    <div class="rankings-cfg-item">PLAYERS <span>${projections.count || 0}</span></div>
+    <div class="rankings-cfg-item">UPDATED <span>${projections.updated || '—'}</span></div>
+  </div>`;
+}
+
+// projKey -> { mine, count } across all synced leagues
+function buildOwnershipMap() {
+  const own = {};
+  L_LEAGUES.forEach(l => {
+    const d = leagueData[l.id];
+    if (!d || !d.teams) return;
+    d.teams.forEach(t => {
+      ['QB','RB','WR','TE'].forEach(pos => {
+        (t.players[pos] || []).forEach(p => {
+          const k = projKey(p.name);
+          if (!own[k]) own[k] = { mine: false, count: 0 };
+          if (t.name === MY_TEAM) own[k].mine = true;
+          own[k].count++;
+        });
+      });
+    });
+  });
+  return own;
+}
+
+function renderRankingsWeeklyView() {
+  if (!projections || !projections.players || !Object.keys(projections.players).length) {
+    return `<div class="empty-state">No projections loaded.<br>Go to <strong>CONFIG</strong> → <strong>SYNC PROJECTIONS</strong>.</div>`;
+  }
+
+  const own = buildOwnershipMap();
+  const anyLeagues = Object.keys(own).length > 0;
+
+  let list = Object.values(projections.players);
+  if (rankFilterWk !== 'ALL') list = list.filter(p => p.pos === rankFilterWk);
+  list.sort((a, b) => b.pts - a.pts);
+
+  const maxPts = list.length ? list[0].pts : 1;
+  const rows = list.map((p, i) => {
+    const o = own[projKey(p.name)];
+    let badge = '';
+    if (anyLeagues) {
+      if (o && o.mine)  badge = `<span class="wk-own mine">YOURS</span>`;
+      else if (o)       badge = `<span class="wk-own">${o.count}\u00d7</span>`;
+      else              badge = `<span class="wk-own fa">FA</span>`;
+    }
+    const c = p.comp || {};
+    const line = p.pos === 'QB'
+      ? `${c.passYds||0} py · ${c.passTDs||0} ptd · ${c.ints||0} int · ${c.rushYds||0} ry`
+      : `${c.rec||0} rec · ${c.recYds||0} ry${c.rushYds ? ' · ' + c.rushYds + ' ru' : ''} · ${c.tds||0} td`;
+    const match = p.opp ? `${p.team} ${p.home ? 'vs' : '@'} ${p.opp}` : (p.team || '—');
+    const inj = p.injury ? `<span class="wk-inj">${p.injury.slice(0, 1).toUpperCase()}</span>` : '';
+    const pct = (p.pts / (maxPts || 1) * 100).toFixed(1);
+    return `<div class="wk-row" data-player="${escAttr(p.name)}">
+      <div class="wk-num">${i + 1}</div>
+      <div class="wk-pos" style="color:${posColor(p.pos)}">${p.pos}</div>
+      <div class="wk-info">
+        <div class="wk-name">${p.name}${inj}${badge}</div>
+        <div class="wk-sub">${match} · ${line}</div>
+      </div>
+      <div class="wk-pts">${p.pts.toFixed(1)}</div>
+      <div class="rank-row-bar"><div class="rank-row-bar-fill" style="width:${pct}%"></div></div>
+    </div>`;
+  }).join('');
+
+  const hdr = `<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:10px;">
+    ${list.length} players with Vegas props · projections move with the lines</div>`;
+  return hdr + `<div class="rankings-table">${rows}</div>`;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// OPTIMAL LINEUPS — FFPC TriFlex: 1 QB, 2 RB, 3 WR, 1 TE, 1 SUPERFLEX, 2 FLEX
+// ════════════════════════════════════════════════════════════════════════════
+const LU_BASE = { QB: 1, RB: 2, WR: 3, TE: 1 };
+const LU_SUPERFLEX = 1;
+const LU_FLEX = 2;
+const LU_SLOT_COUNT = LU_BASE.QB + LU_BASE.RB + LU_BASE.WR + LU_BASE.TE + LU_SUPERFLEX + LU_FLEX;
+
+// Exact, not greedy: within a position you always start your highest scorers,
+// so a lineup is fully described by its position-count vector. Enumerate every
+// legal vector and take the max. QB may occupy at most the SUPERFLEX slot.
+function optimalLineup(pool) {
+  const by = { QB: [], RB: [], WR: [], TE: [] };
+  pool.forEach(p => { if (by[p.pos]) by[p.pos].push(p); });
+  Object.keys(by).forEach(k => by[k].sort((a, b) => b.pts - a.pts));
+
+  const flexSlots = LU_SUPERFLEX + LU_FLEX;
+  let best = null;
+  for (let xQB = 0; xQB <= LU_SUPERFLEX; xQB++) {
+    const rest = flexSlots - xQB;
+    for (let xRB = 0; xRB <= rest; xRB++) {
+      for (let xWR = 0; xWR <= rest - xRB; xWR++) {
+        const xTE = rest - xRB - xWR;
+        const want = { QB: LU_BASE.QB + xQB, RB: LU_BASE.RB + xRB, WR: LU_BASE.WR + xWR, TE: LU_BASE.TE + xTE };
+        const picked = {};
+        let total = 0, filled = 0;
+        ['QB','RB','WR','TE'].forEach(pos => {
+          picked[pos] = by[pos].slice(0, want[pos]);
+          picked[pos].forEach(p => { total += p.pts; filled++; });
+        });
+        if (!best || total > best.total + 1e-9 ||
+            (Math.abs(total - best.total) < 1e-9 && filled > best.filled)) {
+          best = { total, filled, picked };
+        }
+      }
+    }
+  }
+
+  const slots = [], leftover = [];
+  ['QB','RB','WR','TE'].forEach(pos => {
+    best.picked[pos].forEach((p, i) => {
+      if (i < LU_BASE[pos]) slots.push(Object.assign({ slot: pos }, p));
+      else leftover.push(p);
+    });
+  });
+  leftover.sort((a, b) => b.pts - a.pts);
+  const sf = leftover.find(p => p.pos === 'QB') || leftover[0];
+  if (sf) slots.push(Object.assign({ slot: 'SUPERFLEX' }, sf));
+  leftover.forEach(p => { if (p !== sf) slots.push(Object.assign({ slot: 'FLEX' }, p)); });
+
+  const started = new Set(slots.map(s => s.name));
+  const bench = pool.filter(p => !started.has(p.name)).sort((a, b) => b.pts - a.pts);
+  return { total: best.total, slots, bench };
+}
+
+function projectTeam(team) {
+  const projected = [], missing = [];
+  ['QB','RB','WR','TE'].forEach(pos => {
+    (team.players[pos] || []).forEach(p => {
+      const pr = getProj(p.name);
+      if (pr) projected.push({ name: p.name, pos, pts: pr.pts, team: pr.team, opp: pr.opp, home: pr.home, injury: pr.injury });
+      else missing.push(p.name);
+    });
+  });
+  return { projected, missing };
+}
+
+function luSlotHtml(s) {
+  const cls = s.slot === 'SUPERFLEX' ? 'sf' : s.slot === 'FLEX' ? 'flex' : '';
+  const match = s.opp ? `${s.team} ${s.home ? 'vs' : '@'} ${s.opp}` : (s.team || '—');
+  return `<div class="lu-slot ${cls}" data-player="${escAttr(s.name)}">
+    <div class="lu-lbl">${s.slot}</div>
+    <div class="wk-pos" style="color:${posColor(s.pos)}">${s.pos}</div>
+    <div class="wk-info"><div class="wk-name">${s.name}${s.injury ? `<span class="wk-inj">${s.injury.slice(0, 1).toUpperCase()}</span>` : ''}</div><div class="wk-sub">${match}</div></div>
+    <div class="wk-pts">${s.pts.toFixed(1)}</div>
+  </div>`;
+}
+
+function renderLineups() {
+  if (!projections) {
+    return `<div class="empty-state">No projections loaded.<br>Go to <strong>CONFIG</strong> → <strong>SYNC PROJECTIONS</strong>.</div>`;
+  }
+  const d = leagueData[currentLeague];
+  if (!d || !d.teams) return `<div class="empty-state">No league data. Press <strong>SYNC</strong>.</div>`;
+
+  const scored = d.teams.map(t => {
+    const pt = projectTeam(t);
+    return { team: t, res: optimalLineup(pt.projected), missing: pt.missing };
+  }).sort((a, b) => b.res.total - a.res.total);
+
+  const mine = scored.find(s => s.team.name === MY_TEAM);
+  let html = '';
+
+  if (mine) {
+    const gaps = LU_SLOT_COUNT - mine.res.slots.length;
+    html += `<div class="config-section">
+      <div class="config-section-title">${mine.team.name} — OPTIMAL</div>
+      <div style="display:flex;align-items:baseline;gap:10px;padding:0 12px 8px;">
+        <div class="lu-total">${mine.res.total.toFixed(1)}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);">PROJECTED PTS · WK ${projections.week == null ? '—' : projections.week}</div>
+      </div>
+      ${mine.res.slots.map(luSlotHtml).join('')}
+      ${gaps > 0 ? `<div class="lu-empty">${gaps} slot(s) unfillable — no eligible projected player</div>` : ''}
+    </div>`;
+
+    const bench = mine.res.bench.slice(0, 8);
+    if (bench.length) {
+      html += `<div class="config-section"><div class="config-section-title">BENCH</div>
+        ${bench.map(p => `<div class="lu-slot" data-player="${escAttr(p.name)}">
+          <div class="lu-lbl">BENCH</div>
+          <div class="wk-pos" style="color:${posColor(p.pos)}">${p.pos}</div>
+          <div class="wk-info"><div class="wk-name">${p.name}</div></div>
+          <div class="wk-pts" style="color:var(--muted)">${p.pts.toFixed(1)}</div>
+        </div>`).join('')}</div>`;
+    }
+
+    if (mine.missing.length) {
+      html += `<div class="config-section"><div class="config-section-title">NO PROJECTION (${mine.missing.length})</div>
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);padding:0 12px;line-height:1.7;">
+          ${mine.missing.join(' · ')}
+          <div style="margin-top:8px;color:var(--accent2);">Scored as 0.0 — no Vegas props posted.</div>
+        </div></div>`;
+    }
+  }
+
+  html += `<div class="config-section"><div class="config-section-title">LEAGUE — OPTIMAL TOTALS</div>
+    ${scored.map((s, i) => `<div class="wk-row">
+      <div class="wk-num">${i + 1}</div>
+      <div class="wk-info">
+        <div class="wk-name" style="${s.team.name === MY_TEAM ? 'color:var(--accent)' : ''}">${s.team.name}</div>
+        <div class="wk-sub">${s.missing.length} unprojected</div>
+      </div>
+      <div class="wk-pts">${s.res.total.toFixed(1)}</div>
+    </div>`).join('')}</div>`;
+
+  return html;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
