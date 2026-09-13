@@ -410,7 +410,7 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 .wk-info{flex:1;min-width:0;}
 .wk-name{font-family:'DM Sans',sans-serif;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .wk-sub{font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:2px;}
-.wk-pts{font-family:'Bebas Neue',sans-serif;font-size:20px;color:var(--accent);min-width:52px;text-align:right;}
+.wk-pts{font-family:'Bebas Neue',sans-serif;font-size:20px;color:var(--accent);min-width:62px;text-align:right;}
 .wk-own{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:0.5px;padding:1px 5px;border-radius:3px;border:1px solid var(--border2);color:var(--muted);margin-left:6px;}
 .wk-own.mine{border-color:var(--accent);color:var(--accent);}
 .wk-own.fa{border-color:var(--accent3);color:var(--accent3);}
@@ -419,6 +419,11 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 .lu-slot.sf{background:rgba(0,191,255,0.05);}
 .lu-slot.flex{background:rgba(192,132,252,0.05);}
 .lu-lbl{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:1px;color:var(--muted);min-width:72px;}
+.lu-teamrow{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px;}
+.lu-teambtn{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:1px;padding:4px 12px;border-radius:5px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;transition:all 0.15s;opacity:0.55;}
+.lu-teambtn.active{opacity:1;border-color:var(--accent3);color:var(--accent3);background:rgba(255,209,102,0.08);}
+.lu-teambtn.mine{color:var(--accent);border-color:var(--accent);}
+.lu-teambtn.mine.active{background:rgba(0,229,160,0.10);}
 .lu-total{font-family:'Bebas Neue',sans-serif;font-size:30px;color:var(--accent);}
 .lu-empty{color:var(--accent2);font-family:'DM Mono',monospace;font-size:11px;padding:8px 12px;}
 /* Config info strip */
@@ -4620,6 +4625,7 @@ const PROJ_LS_KEY = 'dynastyCalc_projections_v1';
 let projections = null;
 let projLoaded = false;
 let rankFilterWk = 'ALL';
+let luTeam = null;          // LINEUPS: which team's optimal lineup is expanded
 
 // Same key the scraper writes: normalizeName() + PLAYER_ALIASES.
 function projKey(name) {
@@ -4664,6 +4670,8 @@ function updateProjStatus() {
 }
 
 function setRankFilterWk(f) { rankFilterWk = f; renderRankingsTab(); }
+
+function setLuTeam(name) { luTeam = name; renderLeagues(); }
 
 function renderWeeklyConfigStrip() {
   if (!projections) return '';
@@ -4730,7 +4738,7 @@ function renderRankingsWeeklyView() {
         <div class="wk-name">${p.name}${inj}${badge}</div>
         <div class="wk-sub">${match} · ${line}</div>
       </div>
-      <div class="wk-pts">${p.pts.toFixed(1)}</div>
+      <div class="wk-pts">${p.pts.toFixed(2)}</div>
       <div class="rank-row-bar"><div class="rank-row-bar-fill" style="width:${pct}%"></div></div>
     </div>`;
   }).join('');
@@ -4814,7 +4822,7 @@ function luSlotHtml(s) {
     <div class="lu-lbl">${s.slot}</div>
     <div class="wk-pos" style="color:${posColor(s.pos)}">${s.pos}</div>
     <div class="wk-info"><div class="wk-name">${s.name}${s.injury ? `<span class="wk-inj">${s.injury.slice(0, 1).toUpperCase()}</span>` : ''}</div><div class="wk-sub">${match}</div></div>
-    <div class="wk-pts">${s.pts.toFixed(1)}</div>
+    <div class="wk-pts">${s.pts.toFixed(2)}</div>
   </div>`;
 }
 
@@ -4830,49 +4838,55 @@ function renderLineups() {
     return { team: t, res: optimalLineup(pt.projected), missing: pt.missing };
   }).sort((a, b) => b.res.total - a.res.total);
 
-  const mine = scored.find(s => s.team.name === MY_TEAM);
-  let html = '';
+  // luTeam may be from another league (or a renamed team) — fall back to yours, then the leader.
+  const sel = scored.find(s => s.team.name === luTeam)
+           || scored.find(s => s.team.name === MY_TEAM)
+           || scored[0];
+  if (!sel) return `<div class="empty-state">No teams in this league.</div>`;
 
-  if (mine) {
-    const gaps = LU_SLOT_COUNT - mine.res.slots.length;
-    html += `<div class="config-section">
-      <div class="config-section-title">${mine.team.name} — OPTIMAL</div>
-      <div style="display:flex;align-items:baseline;gap:10px;padding:0 12px 8px;">
-        <div class="lu-total">${mine.res.total.toFixed(1)}</div>
-        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);">PROJECTED PTS · WK ${projections.week == null ? '—' : projections.week}</div>
-      </div>
-      ${mine.res.slots.map(luSlotHtml).join('')}
-      ${gaps > 0 ? `<div class="lu-empty">${gaps} slot(s) unfillable — no eligible projected player</div>` : ''}
-    </div>`;
+  let html = `<div class="lu-teamrow">${scored.map(s => {
+    const cls = (s.team.name === sel.team.name ? 'active ' : '') + (s.team.name === MY_TEAM ? 'mine' : '');
+    return `<button class="lu-teambtn ${cls}" onclick="setLuTeam('${esc(s.team.name)}')">${s.team.name}</button>`;
+  }).join('')}</div>`;
 
-    const bench = mine.res.bench.slice(0, 8);
-    if (bench.length) {
-      html += `<div class="config-section"><div class="config-section-title">BENCH</div>
-        ${bench.map(p => `<div class="lu-slot" data-player="${escAttr(p.name)}">
-          <div class="lu-lbl">BENCH</div>
-          <div class="wk-pos" style="color:${posColor(p.pos)}">${p.pos}</div>
-          <div class="wk-info"><div class="wk-name">${p.name}</div></div>
-          <div class="wk-pts" style="color:var(--muted)">${p.pts.toFixed(1)}</div>
-        </div>`).join('')}</div>`;
-    }
+  const gaps = LU_SLOT_COUNT - sel.res.slots.length;
+  html += `<div class="config-section">
+    <div class="config-section-title">${sel.team.name} — OPTIMAL</div>
+    <div style="display:flex;align-items:baseline;gap:10px;padding:0 12px 8px;">
+      <div class="lu-total">${sel.res.total.toFixed(2)}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);">PROJECTED PTS · WK ${projections.week == null ? '—' : projections.week}</div>
+    </div>
+    ${sel.res.slots.map(luSlotHtml).join('')}
+    ${gaps > 0 ? `<div class="lu-empty">${gaps} slot(s) unfillable — no eligible projected player</div>` : ''}
+  </div>`;
 
-    if (mine.missing.length) {
-      html += `<div class="config-section"><div class="config-section-title">NO PROJECTION (${mine.missing.length})</div>
-        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);padding:0 12px;line-height:1.7;">
-          ${mine.missing.join(' · ')}
-          <div style="margin-top:8px;color:var(--accent2);">Scored as 0.0 — no Vegas props posted.</div>
-        </div></div>`;
-    }
+  const bench = sel.res.bench.slice(0, 8);
+  if (bench.length) {
+    html += `<div class="config-section"><div class="config-section-title">BENCH</div>
+      ${bench.map(p => `<div class="lu-slot" data-player="${escAttr(p.name)}">
+        <div class="lu-lbl">BENCH</div>
+        <div class="wk-pos" style="color:${posColor(p.pos)}">${p.pos}</div>
+        <div class="wk-info"><div class="wk-name">${p.name}${p.injury ? `<span class="wk-inj">${p.injury.slice(0, 1).toUpperCase()}</span>` : ''}</div></div>
+        <div class="wk-pts" style="color:var(--muted)">${p.pts.toFixed(2)}</div>
+      </div>`).join('')}</div>`;
+  }
+
+  if (sel.missing.length) {
+    html += `<div class="config-section"><div class="config-section-title">NO PROJECTION (${sel.missing.length})</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);padding:0 12px;line-height:1.7;">
+        ${sel.missing.join(' · ')}
+        <div style="margin-top:8px;color:var(--accent2);">Scored as 0.00 — no Vegas props posted.</div>
+      </div></div>`;
   }
 
   html += `<div class="config-section"><div class="config-section-title">LEAGUE — OPTIMAL TOTALS</div>
-    ${scored.map((s, i) => `<div class="wk-row">
+    ${scored.map((s, i) => `<div class="wk-row" style="cursor:pointer" onclick="setLuTeam('${esc(s.team.name)}')">
       <div class="wk-num">${i + 1}</div>
       <div class="wk-info">
         <div class="wk-name" style="${s.team.name === MY_TEAM ? 'color:var(--accent)' : ''}">${s.team.name}</div>
         <div class="wk-sub">${s.missing.length} unprojected</div>
       </div>
-      <div class="wk-pts">${s.res.total.toFixed(1)}</div>
+      <div class="wk-pts"${s.team.name === sel.team.name ? '' : ' style="color:var(--text2)"'}>${s.res.total.toFixed(2)}</div>
     </div>`).join('')}</div>`;
 
   return html;
