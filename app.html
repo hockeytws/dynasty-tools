@@ -3814,7 +3814,11 @@ async function scoutLookup() {
 
 function scoutRenderResults(email, data) {
   const resultsEl = document.getElementById('scout-results');
-  const allLeagues = data.leagues || [];
+  // Dynasty-only: league name must contain "dynasty", otherwise it's redraft (proxy filters too; this is a backstop)
+  const redraft = (data.leagues || []).filter(l => !/dynasty/i.test(l.name || ''));
+  data.leagues = (data.leagues || []).filter(l => /dynasty/i.test(l.name || ''));
+  data.skippedRedraft = [...(data.skippedRedraft || []), ...redraft.map(l => l.name)];
+  const allLeagues = data.leagues;
 
   if (!allLeagues.length) {
     resultsEl.innerHTML = `<div class="empty-state">No leagues found for ${email}.</div>`;

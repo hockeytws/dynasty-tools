@@ -1415,13 +1415,14 @@ const requestHandler = async (req, res) => {
     const email = (qs.get('email') || '').trim().toLowerCase();
     const forceRefresh = qs.get('refresh') === '1';
     if (!email) { res.writeHead(400); res.end(JSON.stringify({ error: 'email required' })); return; }
+    console.log(`Scout: request ${email}${forceRefresh ? ' (refresh)' : ''}`);
     try {
       ensureFFPCPlayerMap();
       const config = loadFFPCConfig();
       const jwt = await getDNJwt(config);
       if (!jwt) throw new Error('dynJwt missing');
 
-      function dnRequest(method, path, body) {
+      function dnRequest(method, path, body, strict = false) {
         return new Promise((resolve, reject) => {
           const payload = body ? JSON.stringify(body) : null;
           const options = {
@@ -1441,7 +1442,13 @@ const requestHandler = async (req, res) => {
           let raw = '';
           const r = https.request(options, res2 => {
             res2.on('data', c => raw += c);
-            res2.on('end', () => { try { resolve(JSON.parse(raw)); } catch(e) { resolve(null); } });
+            res2.on('end', () => {
+              try { resolve(JSON.parse(raw)); }
+              catch(e) {
+                if (strict) reject(new Error(`HTTP ${res2.statusCode}: ${raw.replace(/\s+/g, ' ').slice(0, 100) || '(empty body)'}`));
+                else resolve(null);
+              }
+            });
           });
           r.on('error', reject);
           r.on('timeout', () => { r.destroy(); reject(new Error(`DN ${path} timed out`)); });
@@ -1450,22 +1457,49 @@ const requestHandler = async (req, res) => {
         });
       }
 
-      // Bounded-concurrency per-league fetch (113 parallel GETs trips DN rate limits/timeouts)
+      // Bounded-concurrency per-league fetch with retries; failures are reported, not silently dropped
       async function fetchLeagues(metas) {
-        const out = new Array(metas.length);
+        const out = new Array(metas.length), failed = [];
         let next = 0;
         const worker = async () => {
           while (next < metas.length) {
             const i = next++, meta = metas[i];
-            try {
-              const lg = await dnRequest('GET', `leagues/${meta.id}`, null);
-              if (lg && !lg.extId && meta.extId) lg.extId = meta.extId;
-              out[i] = lg ? { lg, meta } : null;
-            } catch(e) { out[i] = null; }
+            let lg = null, why = '';
+            for (let attempt = 0; attempt < 3 && !lg; attempt++) {
+              if (attempt) await new Promise(r => setTimeout(r, 1500 * attempt));
+              try {
+                lg = await dnRequest('GET', `leagues/${meta.id}`, null, true);
+                if (!lg || lg.id == null) { why = lg && lg.error ? `DN: ${lg.error}` : 'empty/non-JSON response'; lg = null; }
+              } catch(e) { why = e.message; }
+            }
+            if (lg) { if (!lg.extId && meta.extId) lg.extId = meta.extId; out[i] = { lg, meta }; }
+            else {
+              failed.push({ id: meta.id, name: meta.name || null, extId: meta.extId || null, reason: why });
+              console.warn(`Scout: league ${meta.id} (${meta.name || meta.extId || '?'}) failed after 3 tries: ${why}`);
+            }
           }
         };
         await Promise.all(Array.from({ length: Math.min(SCOUT_FETCH_CONCURRENCY, metas.length) }, worker));
-        return out.filter(Boolean);
+        // Second pass: DN often 500s on leagues still loading after a fresh import — wait, retry once
+        let finalFailed = failed;
+        if (failed.length) {
+          await new Promise(r => setTimeout(r, SCOUT_RETRY_PASS_DELAY_MS));
+          finalFailed = [];
+          for (const f of failed) {
+            try {
+              const lg = await dnRequest('GET', `leagues/${f.id}`, null, true);
+              if (lg && lg.id != null) {
+                if (!lg.extId && f.extId) lg.extId = f.extId;
+                out.push({ lg, meta: metas.find(m => m.id === f.id) || f });
+                console.log(`Scout: league ${f.id} recovered on second pass`);
+                continue;
+              }
+              finalFailed.push({ ...f, reason: lg && lg.error ? `DN: ${lg.error}` : 'empty response' });
+            } catch(e) { finalFailed.push({ ...f, reason: e.message }); }
+            console.warn(`Scout: league ${f.id} (${f.name || f.extId || '?'}) still failing: ${finalFailed[finalFailed.length - 1].reason}`);
+          }
+        }
+        return { got: out.filter(Boolean), failed: finalFailed };
       }
 
       function resolvePicks(picks) {
@@ -1493,14 +1527,35 @@ const requestHandler = async (req, res) => {
         };
       }
 
+      // Scout is dynasty-only: a league is dynasty iff "dynasty" appears in its name; otherwise redraft (skipped)
+      const isDynastyName = n => /dynasty/i.test(n || '');
+      function splitDynasty(items, nameOf) {
+        const keep = [], skipped = [];
+        for (const it of items) { const n = nameOf(it); (n == null || isDynastyName(n) ? keep : skipped).push(it); }
+        return { keep, skipped };
+      }
+      async function fetchDynastyLeagues(metas) {
+        const pre = splitDynasty(metas, m => m.name);           // skip known-redraft before fetching
+        const { got, failed } = await fetchLeagues(pre.keep);
+        const post = splitDynasty(got, g => g.lg.name);         // metas without a name: filter after fetch
+        const skippedRedraft = [...pre.skipped.map(m => m.name), ...post.skipped.map(g => g.lg.name)];
+        const missing = failed.filter(f => f.name == null || isDynastyName(f.name));
+        if (skippedRedraft.length) console.log(`Scout: skipped ${skippedRedraft.length} redraft (non-"dynasty") leagues`);
+        return { got: post.keep, missing, skippedRedraft };
+      }
+
       // Build leagues from an add-account payload (newLeagues, else per-league fallback)
       async function leaguesFromAddResult(dnData) {
         const newLeagues = dnData.newLeagues || [];
         const accountLeagues = dnData.data?.account?.[0]?.leagues || [];
-        if (newLeagues.length) return { leagues: newLeagues.map(l => buildLeague(l, null)), raw: newLeagues, dnAccountId: dnData.data?.account?.[0]?.id || null };
+        if (newLeagues.length) {
+          const { keep, skipped } = splitDynasty(newLeagues, l => l.name);
+          if (skipped.length) console.log(`Scout: skipped ${skipped.length} redraft (non-"dynasty") leagues`);
+          return { leagues: keep.map(l => buildLeague(l, null)), raw: keep, missing: [], skippedRedraft: skipped.map(l => l.name), dnAccountId: dnData.data?.account?.[0]?.id || null };
+        }
         console.log(`Scout: newLeagues empty — fetching ${accountLeagues.length} leagues individually`);
-        const got = await fetchLeagues(accountLeagues);
-        return { leagues: got.map(g => buildLeague(g.lg, g.meta)), raw: got.map(g => g.lg), dnAccountId: dnData.data?.account?.[0]?.id || null };
+        const { got, missing, skippedRedraft } = await fetchDynastyLeagues(accountLeagues);
+        return { leagues: got.map(g => buildLeague(g.lg, g.meta)), raw: got.map(g => g.lg), missing, skippedRedraft, dnAccountId: dnData.data?.account?.[0]?.id || null };
       }
 
       // Build leagues from an account already linked on DN (no re-import)
@@ -1508,13 +1563,13 @@ const requestHandler = async (req, res) => {
         const acctData = await dnRequest('GET', `accounts/${acct.id}`, null).catch(() => null) || {};
         const metas = acctData.leagues || acct.leagues || [];
         console.log(`Scout: ${email} already linked — fetching ${metas.length} leagues`);
-        const got = await fetchLeagues(metas);
-        return { leagues: got.map(g => buildLeague(g.lg, g.meta)), raw: got.map(g => g.lg), dnAccountId: acct.id };
+        const { got, missing, skippedRedraft } = await fetchDynastyLeagues(metas);
+        return { leagues: got.map(g => buildLeague(g.lg, g.meta)), raw: got.map(g => g.lg), missing, skippedRedraft, dnAccountId: acct.id };
       }
 
       function sendResult(result) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ email, dnAccountId: result.dnAccountId, leagues: result.leagues, playerMapSize: Object.keys(ffpcPlayerMap).length }));
+        res.end(JSON.stringify({ email, dnAccountId: result.dnAccountId, leagues: result.leagues, missing: result.missing || [], skippedRedraft: result.skippedRedraft || [], playerMapSize: Object.keys(ffpcPlayerMap).length }));
         const wasNew = addLeaguemateEmail(email);
         if (wasNew) console.log(`Leaguemates: added ${email} (now ${loadLeaguemates().emails.length} total)`);
         expandPlayerMapFromLeagues(result.raw).catch(e => console.warn('Player map expand failed:', e.message));
@@ -1547,17 +1602,35 @@ const requestHandler = async (req, res) => {
 
         if (reusable) {
           const result = await leaguesFromLinked(linked);
-          if (result.leagues.length) { sendResult(result); return; }
+          if (result.leagues.length || (result.skippedRedraft || []).length) { sendResult(result); return; }
           console.log('Scout: linked account returned 0 leagues — re-importing');
           await dnRequest('POST', 'accounts/remove', { accountId: linked.id }).catch(() => {});
         }
 
         // 3) Start background import
         job = { startedAt: Date.now(), done: false, doneAt: 0, result: null, error: null };
-        job.promise = dynastyNerdsLookup(email, SCOUT_ADD_TIMEOUT_MS)
-          .then(async dnData => {
+        const norm2 = s => String(s || '').trim().toLowerCase();
+        const addWithRecovery = async () => {
+          try {
+            const dnData = await dynastyNerdsLookup(email, SCOUT_ADD_TIMEOUT_MS);
             if (dnData && dnData.error) throw new Error(`DN: ${dnData.error}`);
-            job.result = await leaguesFromAddResult(dnData);
+            return await leaguesFromAddResult(dnData);
+          } catch(e) {
+            if (/timed out/.test(e.message)) throw e;
+            console.warn(`Scout: add-account error (${e.message.slice(0, 80)}) — checking whether ${email} linked anyway`);
+            await new Promise(r => setTimeout(r, 5000));
+            const accts = await dnRequest('GET', 'accounts', null).catch(() => null) || [];
+            const acct = accts.find(a => norm2(a.name) === email || norm2(a.extId) === email);
+            if (acct) return await leaguesFromLinked(acct);
+            console.warn(`Scout: ${email} not linked — retrying add-account once`);
+            const dnData = await dynastyNerdsLookup(email, SCOUT_ADD_TIMEOUT_MS);
+            if (dnData && dnData.error) throw new Error(`DN: ${dnData.error}`);
+            return await leaguesFromAddResult(dnData);
+          }
+        };
+        job.promise = addWithRecovery()
+          .then(async result => {
+            job.result = result;
             scoutLinkedAt.set(email, Date.now());
             console.log(`Scout: ${email} import done in ${Math.round((Date.now() - job.startedAt)/1000)}s → ${job.result.leagues.length} leagues`);
           })
@@ -1567,10 +1640,11 @@ const requestHandler = async (req, res) => {
       }
 
       if (!job.done) await Promise.race([job.promise, new Promise(r => setTimeout(r, SCOUT_HOLD_MS))]);
-      if (!job.done) { sendPending(job.startedAt); return; }
+      if (!job.done) { console.log(`Scout: ${email} import pending (${Math.round((Date.now()-job.startedAt)/1000)}s)`); sendPending(job.startedAt); return; }
       if (job.error) { scoutAddJobs.delete(email); throw job.error; }
       sendResult(job.result);
     } catch(err) {
+      console.warn(`Scout: ${email} failed: ${err.message}`);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }
@@ -1975,10 +2049,17 @@ const requestHandler = async (req, res) => {
   if (req.method === 'POST' && url === '/refresh-dn-jwt') {
     try {
       const config = loadFFPCConfig();
+      const before = { jwt: config.dynJwt, updatedAt: config.dynJwtUpdatedAt };
+      config._origUpdatedAt = config.dynJwtUpdatedAt;
       config.dynJwtUpdatedAt = null; // force refresh regardless of age
-      const jwt = await getDNJwt(config);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, length: jwt ? jwt.length : 0, updatedAt: new Date().toISOString() }));
+      config._forceRefresh = true;
+      await getDNJwt(config);
+      const after = loadFFPCConfig() || {};
+      const refreshed = after.dynJwt !== before.jwt || (after.dynJwtUpdatedAt && after.dynJwtUpdatedAt !== before.updatedAt);
+      res.writeHead(refreshed ? 200 : 502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(refreshed
+        ? { ok: true, changed: after.dynJwt !== before.jwt, length: (after.dynJwt || '').length, updatedAt: after.dynJwtUpdatedAt || null }
+        : { ok: false, error: 'Edge refresh found no new token (see proxy.log). Log into app.dynastynerds.com in Edge, close Edge, retry — or POST /set-dn-jwt', tokenAgeDays: before.updatedAt ? Math.round((Date.now() - new Date(before.updatedAt).getTime()) / 86400000) : null }));
     } catch(err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
@@ -2344,18 +2425,23 @@ const SCOUT_ADD_TIMEOUT_MS = 300000;     // DN add-account socket idle timeout (
 const SCOUT_RESULT_TTL_MS = 30 * 60000;  // cached import result lifetime
 const SCOUT_REUSE_MAX_AGE_MS = 12 * 3600000; // reuse a still-linked account imported within this window
 const SCOUT_FETCH_CONCURRENCY = 8;
+const SCOUT_RETRY_PASS_DELAY_MS = 10000; // pause before re-trying failed leagues once more
 
 // ── DN JWT Auto-Refresh ───────────────────────────────────────────────────────
 // Reads JWT from Edge's localStorage LevelDB via dn-jwt-from-edge.js.
 // Called automatically before any DN lookup when JWT is 25+ days old.
 let dnJwtRefreshInProgress = false;
+let dnJwtRefreshFailedAt = 0;              // skip repeat Edge reads for 6h after a failed refresh
+const DN_JWT_RETRY_COOLDOWN_MS = 6 * 3600000;
 
 async function getDNJwt(config) {
   const existing = config && config.dynJwt;
   const updatedAt = config && config.dynJwtUpdatedAt ? new Date(config.dynJwtUpdatedAt).getTime() : 0;
+  const origUpdatedAt = config ? (config._origUpdatedAt !== undefined ? config._origUpdatedAt : config.dynJwtUpdatedAt) : null;
   const ageDays = (Date.now() - updatedAt) / (1000 * 60 * 60 * 24);
 
   if (existing && ageDays < 25) return existing;
+  if (existing && !(config && config._forceRefresh) && Date.now() - dnJwtRefreshFailedAt < DN_JWT_RETRY_COOLDOWN_MS) return existing;
 
   if (existing) console.log(`DN JWT: ${Math.round(ageDays)} days old — refreshing from Edge...`);
   else console.log('DN JWT: none found — reading from Edge...');
@@ -2384,11 +2470,15 @@ async function getDNJwt(config) {
       if (stdout) console.log('DN JWT refresh:', stdout.trim());
       if (err) {
         console.warn('DN JWT refresh failed:', err.message);
+        dnJwtRefreshFailedAt = Date.now();
         if (existing) { resolve(existing); return; }
         reject(new Error('DN JWT refresh failed: ' + err.message));
         return;
       }
       const fresh = loadFFPCConfig();
+      const changed = !!fresh && (fresh.dynJwt !== existing || (!!fresh.dynJwtUpdatedAt && fresh.dynJwtUpdatedAt !== origUpdatedAt));
+      if (!changed) { dnJwtRefreshFailedAt = Date.now(); console.warn('DN JWT: Edge refresh found no new token — using existing; next auto-retry in 6h'); }
+      else dnJwtRefreshFailedAt = 0;
       resolve(fresh?.dynJwt || existing);
     });
   });
