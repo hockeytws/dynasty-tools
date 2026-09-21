@@ -1406,15 +1406,20 @@ const requestHandler = async (req, res) => {
     return;
   }
 
-  // GET /scout-lookup?email=foo@bar.com
+  // GET /scout-lookup?email=foo@bar.com[&refresh=1]
+  // DN's add-account scrapes every FFPC league server-side before replying — 100+ league
+  // users take well over a minute. We run the add in the background, hold each request
+  // ≤ SCOUT_HOLD_MS, and return 202 {pending} so the client polls instead of timing out.
   if (req.method === 'GET' && url.startsWith('/scout-lookup')) {
-    const qs = req.url.split('?')[1] || '';
-    const email = new URLSearchParams(qs).get('email');
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    const email = (qs.get('email') || '').trim().toLowerCase();
+    const forceRefresh = qs.get('refresh') === '1';
     if (!email) { res.writeHead(400); res.end(JSON.stringify({ error: 'email required' })); return; }
     try {
       ensureFFPCPlayerMap();
       const config = loadFFPCConfig();
-      const jwt = config && config.dynJwt ? config.dynJwt : null;
+      const jwt = await getDNJwt(config);
+      if (!jwt) throw new Error('dynJwt missing');
 
       function dnRequest(method, path, body) {
         return new Promise((resolve, reject) => {
@@ -1445,42 +1450,36 @@ const requestHandler = async (req, res) => {
         });
       }
 
-      // Step 1: Remove ALL linked accounts so owned:true is clean for this lookup only.
-      // We remove every account including our own — the scouted user is added fresh in Step 2.
-      const accounts = await dnRequest('GET', 'accounts', null) || [];
-      if (accounts.length > 0) {
-        console.log(`Scout: clearing ${accounts.length} accounts before lookup: ${accounts.map(a => a.name).join(', ')}`);
-        await Promise.all(accounts.map(a =>
-          dnRequest('POST', 'accounts/remove', { accountId: a.id }).catch(() => {})
-        ));
+      // Bounded-concurrency per-league fetch (113 parallel GETs trips DN rate limits/timeouts)
+      async function fetchLeagues(metas) {
+        const out = new Array(metas.length);
+        let next = 0;
+        const worker = async () => {
+          while (next < metas.length) {
+            const i = next++, meta = metas[i];
+            try {
+              const lg = await dnRequest('GET', `leagues/${meta.id}`, null);
+              if (lg && !lg.extId && meta.extId) lg.extId = meta.extId;
+              out[i] = lg ? { lg, meta } : null;
+            } catch(e) { out[i] = null; }
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(SCOUT_FETCH_CONCURRENCY, metas.length) }, worker));
+        return out.filter(Boolean);
       }
-
-      // Step 2: Add the scouted user — newLeagues will have correct owned:true
-      const dnData = await dynastyNerdsLookup(email);
-      const newLeagues = dnData.newLeagues || [];
-      const accountLeagues = (dnData.data?.account?.[0]?.leagues) || [];
-      const dnAccountId = dnData.data?.account?.[0]?.id || null;
-
-      console.log(`Scout: ${email} → ${newLeagues.length} newLeagues, ${accountLeagues.length} accountLeagues`);
 
       function resolvePicks(picks) {
         // DN reuses the same pickId for all picks of the same round (e.g. all R1s share pickId 421).
         // previousTeamId always equals the current team — no traded-from info available from DN.
-        // Each array entry is a distinct pick, so just map them directly with no dedup.
         return (picks || [])
           .map(pk => ({ year: pk.year, round: pk.round, tradedFrom: null }))
           .sort((a, b) => a.year - b.year || a.round - b.round);
       }
-
       function resolveTeam(team, leagueId, ownedTeamId) {
         const allIds = [...(team.starters||[]), ...(team.bench||[]), ...(team.taxi||[]), ...(team.ir||[])];
-        const players = allIds.map(id => {
-          const name = ffpcPlayerMap[String(id)];
-          return name ? { id, name } : { id, name: null };
-        });
+        const players = allIds.map(id => ({ id, name: ffpcPlayerMap[String(id)] || null }));
         return { id: team.id, name: team.name, owned: team.id === ownedTeamId, leagueId: team.leagueId || leagueId, players, picks: resolvePicks(team.picks) };
       }
-
       function buildLeague(league, meta) {
         const ownedTeamId = (league.teams || []).find(t => t.owned)?.id ?? null;
         return {
@@ -1494,26 +1493,83 @@ const requestHandler = async (req, res) => {
         };
       }
 
-      let leagues = newLeagues.map(league => buildLeague(league, null));
-
-      // Fallback: if newLeagues still empty, fetch per-league
-      if (leagues.length === 0 && accountLeagues.length > 0) {
+      // Build leagues from an add-account payload (newLeagues, else per-league fallback)
+      async function leaguesFromAddResult(dnData) {
+        const newLeagues = dnData.newLeagues || [];
+        const accountLeagues = dnData.data?.account?.[0]?.leagues || [];
+        if (newLeagues.length) return { leagues: newLeagues.map(l => buildLeague(l, null)), raw: newLeagues, dnAccountId: dnData.data?.account?.[0]?.id || null };
         console.log(`Scout: newLeagues empty — fetching ${accountLeagues.length} leagues individually`);
-        const fetched = await Promise.all(accountLeagues.map(meta =>
-          dnRequest('GET', `leagues/${meta.id}`, null).then(league => league ? buildLeague(league, meta) : null)
-        ));
-        leagues = fetched.filter(Boolean);
+        const got = await fetchLeagues(accountLeagues);
+        return { leagues: got.map(g => buildLeague(g.lg, g.meta)), raw: got.map(g => g.lg), dnAccountId: dnData.data?.account?.[0]?.id || null };
       }
 
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ email, dnAccountId, leagues, playerMapSize: Object.keys(ffpcPlayerMap).length }));
+      // Build leagues from an account already linked on DN (no re-import)
+      async function leaguesFromLinked(acct) {
+        const acctData = await dnRequest('GET', `accounts/${acct.id}`, null).catch(() => null) || {};
+        const metas = acctData.leagues || acct.leagues || [];
+        console.log(`Scout: ${email} already linked — fetching ${metas.length} leagues`);
+        const got = await fetchLeagues(metas);
+        return { leagues: got.map(g => buildLeague(g.lg, g.meta)), raw: got.map(g => g.lg), dnAccountId: acct.id };
+      }
 
-      // Save this email to leaguemates.json if it's a new contact
-      const wasNew = addLeaguemateEmail(email);
-      if (wasNew) console.log(`Leaguemates: added ${email} (now ${loadLeaguemates().emails.length} total)`);
+      function sendResult(result) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ email, dnAccountId: result.dnAccountId, leagues: result.leagues, playerMapSize: Object.keys(ffpcPlayerMap).length }));
+        const wasNew = addLeaguemateEmail(email);
+        if (wasNew) console.log(`Leaguemates: added ${email} (now ${loadLeaguemates().emails.length} total)`);
+        expandPlayerMapFromLeagues(result.raw).catch(e => console.warn('Player map expand failed:', e.message));
+      }
+      function sendPending(startedAt) {
+        res.writeHead(202, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ email, pending: true, elapsedSec: Math.round((Date.now() - startedAt) / 1000) }));
+      }
 
-      // Expand player map in background — don't await, response already sent
-      expandPlayerMapFromLeagues(newLeagues).catch(e => console.warn('Player map expand failed:', e.message));
+      // 1) Import already running (or just finished) for this email → wait on it
+      let job = scoutAddJobs.get(email);
+      if (job && forceRefresh && job.done) { scoutAddJobs.delete(email); job = null; }
+      if (job && job.done && Date.now() - job.doneAt > SCOUT_RESULT_TTL_MS) { scoutAddJobs.delete(email); job = null; }
+
+      if (!job) {
+        // 2) Account already linked (e.g. prior add finished after a client timeout) → reuse
+        const accounts = await dnRequest('GET', 'accounts', null) || [];
+        const norm = s => String(s || '').trim().toLowerCase();
+        const linked = accounts.find(a => norm(a.name) === email || norm(a.extId) === email);
+        const others = accounts.filter(a => a !== linked);
+        const reusable = linked && !forceRefresh &&
+          (!scoutLinkedAt.has(email) || Date.now() - scoutLinkedAt.get(email) < SCOUT_REUSE_MAX_AGE_MS);
+
+        // Remove every other account so owned:true reflects only the scouted user
+        const toRemove = reusable ? others : accounts;
+        if (toRemove.length) {
+          console.log(`Scout: removing ${toRemove.length} accounts: ${toRemove.map(a => a.name).join(', ')}`);
+          await Promise.all(toRemove.map(a => dnRequest('POST', 'accounts/remove', { accountId: a.id }).catch(() => {})));
+        }
+
+        if (reusable) {
+          const result = await leaguesFromLinked(linked);
+          if (result.leagues.length) { sendResult(result); return; }
+          console.log('Scout: linked account returned 0 leagues — re-importing');
+          await dnRequest('POST', 'accounts/remove', { accountId: linked.id }).catch(() => {});
+        }
+
+        // 3) Start background import
+        job = { startedAt: Date.now(), done: false, doneAt: 0, result: null, error: null };
+        job.promise = dynastyNerdsLookup(email, SCOUT_ADD_TIMEOUT_MS)
+          .then(async dnData => {
+            if (dnData && dnData.error) throw new Error(`DN: ${dnData.error}`);
+            job.result = await leaguesFromAddResult(dnData);
+            scoutLinkedAt.set(email, Date.now());
+            console.log(`Scout: ${email} import done in ${Math.round((Date.now() - job.startedAt)/1000)}s → ${job.result.leagues.length} leagues`);
+          })
+          .catch(e => { job.error = e; console.warn(`Scout: ${email} import failed: ${e.message}`); })
+          .finally(() => { job.done = true; job.doneAt = Date.now(); });
+        scoutAddJobs.set(email, job);
+      }
+
+      if (!job.done) await Promise.race([job.promise, new Promise(r => setTimeout(r, SCOUT_HOLD_MS))]);
+      if (!job.done) { sendPending(job.startedAt); return; }
+      if (job.error) { scoutAddJobs.delete(email); throw job.error; }
+      sendResult(job.result);
     } catch(err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
@@ -2280,6 +2336,15 @@ async function expandPlayerMapFromLeagues(dnLeagues) {
 }
 
 
+// ── Scout background-import state ─────────────────────────────────────────────
+const scoutAddJobs = new Map();   // email -> { promise, startedAt, done, doneAt, result, error }
+const scoutLinkedAt = new Map();  // email -> ms timestamp of last completed DN import
+const SCOUT_HOLD_MS = 40000;             // max time one HTTP request waits (< iOS ~60s idle limit)
+const SCOUT_ADD_TIMEOUT_MS = 300000;     // DN add-account socket idle timeout (large accounts are slow)
+const SCOUT_RESULT_TTL_MS = 30 * 60000;  // cached import result lifetime
+const SCOUT_REUSE_MAX_AGE_MS = 12 * 3600000; // reuse a still-linked account imported within this window
+const SCOUT_FETCH_CONCURRENCY = 8;
+
 // ── DN JWT Auto-Refresh ───────────────────────────────────────────────────────
 // Reads JWT from Edge's localStorage LevelDB via dn-jwt-from-edge.js.
 // Called automatically before any DN lookup when JWT is 25+ days old.
@@ -2329,7 +2394,7 @@ async function getDNJwt(config) {
   });
 }
 
-async function dynastyNerdsLookup(email) {
+async function dynastyNerdsLookup(email, timeoutMs = 20000) {
   const config = loadFFPCConfig();
   const jwt = await getDNJwt(config);
   if (!jwt) throw new Error('dynJwt missing — ensure dn-jwt-from-edge.js is in dynasty-calc and run: npm install level');
@@ -2350,7 +2415,7 @@ async function dynastyNerdsLookup(email) {
         'Referer': 'https://app.dynastynerds.com/',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
       },
-      timeout: 20000,
+      timeout: timeoutMs,
     };
     const reqHttp = https.request(options, (r) => {
       let data = '';
@@ -2362,7 +2427,7 @@ async function dynastyNerdsLookup(email) {
         catch(e) { reject(new Error(`DN parse failed: ${data.slice(0,300)}`)); }
       });
     });
-    reqHttp.on('timeout', () => { reqHttp.destroy(); reject(new Error('DN request timed out')); });
+    reqHttp.on('timeout', () => { reqHttp.destroy(); reject(new Error(`DN add-account timed out after ${Math.round(timeoutMs/1000)}s`)); });
     reqHttp.on('error', reject);
     reqHttp.write(payload);
     reqHttp.end();
