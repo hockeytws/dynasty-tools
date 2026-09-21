@@ -1480,23 +1480,24 @@ const requestHandler = async (req, res) => {
           }
         };
         await Promise.all(Array.from({ length: Math.min(SCOUT_FETCH_CONCURRENCY, metas.length) }, worker));
-        // Second pass: DN often 500s on leagues still loading after a fresh import — wait, retry once
+        // Retry passes: DN's 500s are transient (different leagues fail each run) — back off and retry
         let finalFailed = failed;
-        if (failed.length) {
-          await new Promise(r => setTimeout(r, SCOUT_RETRY_PASS_DELAY_MS));
-          finalFailed = [];
-          for (const f of failed) {
+        for (let pass = 0; pass < SCOUT_RETRY_PASS_DELAYS_MS.length && finalFailed.length; pass++) {
+          await new Promise(r => setTimeout(r, SCOUT_RETRY_PASS_DELAYS_MS[pass]));
+          const pending = finalFailed; finalFailed = [];
+          const last = pass === SCOUT_RETRY_PASS_DELAYS_MS.length - 1;
+          for (const f of pending) {
             try {
               const lg = await dnRequest('GET', `leagues/${f.id}`, null, true);
               if (lg && lg.id != null) {
                 if (!lg.extId && f.extId) lg.extId = f.extId;
                 out.push({ lg, meta: metas.find(m => m.id === f.id) || f });
-                console.log(`Scout: league ${f.id} recovered on second pass`);
+                console.log(`Scout: league ${f.id} recovered on retry pass ${pass + 1}`);
                 continue;
               }
               finalFailed.push({ ...f, reason: lg && lg.error ? `DN: ${lg.error}` : 'empty response' });
             } catch(e) { finalFailed.push({ ...f, reason: e.message }); }
-            console.warn(`Scout: league ${f.id} (${f.name || f.extId || '?'}) still failing: ${finalFailed[finalFailed.length - 1].reason}`);
+            if (last) console.warn(`Scout: league ${f.id} (${f.name || f.extId || '?'}) still failing after ${pass + 1} retry passes: ${finalFailed[finalFailed.length - 1].reason}`);
           }
         }
         return { got: out.filter(Boolean), failed: finalFailed };
@@ -2425,7 +2426,7 @@ const SCOUT_ADD_TIMEOUT_MS = 300000;     // DN add-account socket idle timeout (
 const SCOUT_RESULT_TTL_MS = 30 * 60000;  // cached import result lifetime
 const SCOUT_REUSE_MAX_AGE_MS = 12 * 3600000; // reuse a still-linked account imported within this window
 const SCOUT_FETCH_CONCURRENCY = 8;
-const SCOUT_RETRY_PASS_DELAY_MS = 10000; // pause before re-trying failed leagues once more
+const SCOUT_RETRY_PASS_DELAYS_MS = [10000, 20000, 30000]; // backoff before each retry pass over failed leagues
 
 // ── DN JWT Auto-Refresh ───────────────────────────────────────────────────────
 // Reads JWT from Edge's localStorage LevelDB via dn-jwt-from-edge.js.
